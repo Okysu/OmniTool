@@ -11,6 +11,7 @@ import { reactive, watch } from 'vue'
 import { nanoid } from '@/lib/id'
 import * as vfs from '@/core/vfs'
 import { findTool } from '@/core/plugin/registry'
+import { settings } from '@/core/settings'
 import { cancel, enqueue, tasks } from '@/core/tasks/queue'
 import type { ParamValues } from '@/core/types'
 import { runPipeline, type PipelineStep, type RunProgress, type RunnerDeps } from './runner'
@@ -24,11 +25,23 @@ export interface Pipeline {
   steps: PipelineStep[]
   /** Delete intermediate files once the whole pipeline succeeds. */
   cleanup: boolean
+  /**
+   * Flowchart positions the user dragged nodes to, keyed by step id or
+   * `input` / `output`. Nodes without an entry take the automatic layout.
+   */
+  layout: Record<string, NodePosition>
   createdAt: number
   updatedAt: number
 }
 
+export interface NodePosition {
+  x: number
+  y: number
+}
+
 const STORAGE_KEY = 'omnitool.pipelines'
+/** Bounds for stored node coordinates; anything outside is dropped as garbage. */
+const MAX_COORD = 100_000
 const MAX_PIPELINES = 200
 const MAX_STEPS = 32
 
@@ -67,9 +80,23 @@ export function sanitize(value: unknown): Pipeline | null {
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 80) : '未命名工作流',
     steps,
     cleanup: raw.cleanup !== false,
+    layout: sanitizeLayout(raw.layout, new Set(['input', 'output', ...steps.map((step) => step.id)])),
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
   }
+}
+
+function sanitizeLayout(value: unknown, keys: Set<string>): Record<string, NodePosition> {
+  const layout: Record<string, NodePosition> = {}
+  if (!value || typeof value !== 'object') return layout
+  for (const [key, position] of Object.entries(value as Record<string, unknown>)) {
+    if (!keys.has(key) || !position || typeof position !== 'object') continue
+    const { x, y } = position as Record<string, unknown>
+    if (typeof x === 'number' && typeof y === 'number' && Math.abs(x) <= MAX_COORD && Math.abs(y) <= MAX_COORD) {
+      layout[key] = { x: Math.round(x), y: Math.round(y) }
+    }
+  }
+  return layout
 }
 
 watch(
@@ -84,13 +111,24 @@ watch(
   { deep: true },
 )
 
-export function createPipeline(seed: Partial<Pick<Pipeline, 'name' | 'steps'>> = {}): Pipeline {
+export function createPipeline(
+  seed: Partial<Pick<Pipeline, 'name' | 'steps' | 'cleanup'>> & { layout?: Record<string, NodePosition> } = {},
+): Pipeline {
   const now = Date.now()
+  const steps = (seed.steps ?? []).map((step) => ({ ...step, id: nanoid(8), params: { ...step.params } }))
+  // Positions follow their step to its new id.
+  const layout: Record<string, NodePosition> = {}
+  for (const key of ['input', 'output']) if (seed.layout?.[key]) layout[key] = { ...seed.layout[key] }
+  seed.steps?.forEach((step, index) => {
+    const position = seed.layout?.[step.id]
+    if (position) layout[steps[index].id] = { ...position }
+  })
   const pipeline: Pipeline = {
     id: nanoid(10),
-    name: seed.name ?? '新工作流',
-    steps: (seed.steps ?? []).map((step) => ({ ...step, id: nanoid(8), params: { ...step.params } })),
-    cleanup: true,
+    name: seed.name?.trim() ? seed.name.trim().slice(0, 80) : '新工作流',
+    steps,
+    cleanup: seed.cleanup ?? true,
+    layout,
     createdAt: now,
     updatedAt: now,
   }
@@ -101,17 +139,68 @@ export function createPipeline(seed: Partial<Pick<Pipeline, 'name' | 'steps'>> =
 export function importPipeline(json: unknown): Pipeline {
   const parsed = sanitize(json)
   if (!parsed) throw new Error('不是有效的工作流文件')
-  return createPipeline({ name: parsed.name, steps: parsed.steps })
+  return createPipeline(parsed)
 }
 
 export function deletePipeline(id: string): void {
   const index = pipelines.findIndex((p) => p.id === id)
   if (index !== -1) pipelines.splice(index, 1)
+  setPinned(id, false)
+  delete sessions[id]
 }
 
 export function exportPipeline(pipeline: Pipeline): string {
-  const { name, steps, cleanup } = pipeline
-  return JSON.stringify({ format: 'omnitool-pipeline', version: 1, name, cleanup, steps: steps.map(({ toolKey, params }) => ({ toolKey, params })) }, null, 2)
+  const { name, steps, cleanup, layout } = pipeline
+  return JSON.stringify(
+    { format: 'omnitool-pipeline', version: 1, name, cleanup, layout, steps: steps.map(({ id, toolKey, params }) => ({ id, toolKey, params })) },
+    null,
+    2,
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pinning                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Pinned workflows share the sidebar's pin list with tools, so they can be
+ * ordered among them. A prefix keeps the two apart: tool keys are
+ * `pluginId/toolId` and can never start with `flow:`.
+ */
+export const PIN_PREFIX = 'flow:'
+
+export function isPinned(id: string): boolean {
+  return settings.pinned.includes(PIN_PREFIX + id)
+}
+
+export function setPinned(id: string, pinned: boolean): void {
+  const key = PIN_PREFIX + id
+  const has = settings.pinned.includes(key)
+  if (pinned && !has) settings.pinned = [...settings.pinned, key]
+  else if (!pinned && has) settings.pinned = settings.pinned.filter((k) => k !== key)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sessions                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What the user is doing with a pipeline right now: the files or text they
+ * gave it and the run they started. Kept per pipeline and outside any view,
+ * so switching between the run page and the editor keeps both.
+ */
+export interface PipelineSession {
+  inputs: string[]
+  text: string
+  inputTab: 'files' | 'text'
+  runId: string | null
+}
+
+const sessions = reactive<Record<string, PipelineSession>>({})
+
+export function pipelineSession(id: string): PipelineSession {
+  if (!sessions[id]) sessions[id] = { inputs: [], text: '', inputTab: 'files', runId: null }
+  return sessions[id]
 }
 
 /** Starting points built from built-in tools. Templates whose tools are missing are hidden. */

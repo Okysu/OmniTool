@@ -23,6 +23,7 @@ import { InputGroup, InputGroupAddon } from '@/components/ui/input-group'
 import { paletteOpen } from '@/core/ui/palette'
 import { allTools, type ToolEntry } from '@/core/plugin/registry'
 import { settings, type ThemeMode } from '@/core/settings'
+import { PIN_PREFIX, pipelines, type Pipeline } from '@/core/pipelines'
 import { CATEGORY_LABEL, type ToolCategory } from '@/core/types'
 
 const router = useRouter()
@@ -53,6 +54,19 @@ function toolCommand(entry: ToolEntry): Command {
       .filter(Boolean)
       .join(' '),
     run: () => router.push(`/t/${entry.pluginId}/${entry.tool.id}`),
+  }
+}
+
+function pipelineCommand(pipeline: Pipeline): Command {
+  const chain = pipeline.steps.map((step) => allTools.value.find((e) => e.key === step.toolKey)?.tool.name ?? step.toolKey)
+  return {
+    id: `flow:${pipeline.id}`,
+    title: pipeline.name,
+    subtitle: chain.length ? chain.join(' → ') : '还没有步骤',
+    icon: 'workflow',
+    badge: '工作流',
+    haystack: ['工作流 workflow', pipeline.name, ...chain].join(' '),
+    run: () => router.push(`/flows/${pipeline.id}`),
   }
 }
 
@@ -108,7 +122,7 @@ const groups = computed<Group[]>(() => {
   const tools = allTools.value
 
   if (term) {
-    const ranked = [...tools.map(toolCommand), ...actions.value]
+    const ranked = [...tools.map(toolCommand), ...pipelines.map(pipelineCommand), ...actions.value]
       .map((command) => ({ command, value: score(`${command.title} ${command.haystack}`, term) }))
       .filter((row) => row.value > 0)
       .sort((a, b) => b.value - a.value)
@@ -117,14 +131,21 @@ const groups = computed<Group[]>(() => {
   }
 
   const byKey = new Map(tools.map((entry) => [entry.key, entry]))
-  const pinned = settings.pinned.map((key) => byKey.get(key)).filter((e): e is ToolEntry => !!e)
+  const pinned = settings.pinned.flatMap((key): Command[] => {
+    if (key.startsWith(PIN_PREFIX)) {
+      const pipeline = pipelines.find((p) => p.id === key.slice(PIN_PREFIX.length))
+      return pipeline ? [pipelineCommand(pipeline)] : []
+    }
+    const entry = byKey.get(key)
+    return entry ? [toolCommand(entry)] : []
+  })
   const recent = settings.recentTools
     .map((key) => byKey.get(key))
     .filter((e): e is ToolEntry => !!e && !settings.pinned.includes(e.key))
     .slice(0, 5)
 
   const out: Group[] = []
-  if (pinned.length) out.push({ name: '置顶', items: pinned.map(toolCommand) })
+  if (pinned.length) out.push({ name: '置顶', items: pinned })
   if (recent.length) out.push({ name: '最近使用', items: recent.map(toolCommand) })
   for (const category of CATEGORY_ORDER) {
     const inCategory = tools.filter((entry) => entry.tool.category === category)

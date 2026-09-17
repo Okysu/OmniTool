@@ -117,7 +117,7 @@ function addToPipeline(pipelineId: string | null) {
   if (pipelineId) target.steps.push(step)
   else target.steps.splice(0, target.steps.length, step)
   pushToast({ level: 'success', message: `已加入工作流「${target.name}」` })
-  void router.push(`/flows/${target.id}`)
+  void router.push(`/flows/${target.id}/edit`)
 }
 
 async function run() {

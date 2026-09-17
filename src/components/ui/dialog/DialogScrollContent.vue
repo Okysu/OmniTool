@@ -1,4 +1,8 @@
 <script setup lang="ts">
+// LOCAL MODIFICATION: `grid-cols-[minmax(0,1fr)]` keeps the single grid track at the
+// dialog's width. The implicit `auto` track grows to the min-content of truncated
+// (nowrap) text, pushing long descriptions and URLs out of the dialog. Also keeps
+// a side gutter on phones.
 import type { DialogContentEmits, DialogContentProps } from 'reka-ui'
 
 import type { HTMLAttributes } from 'vue'
@@ -33,7 +37,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       <DialogContent
         :class="
           cn(
-            'relative z-50 grid w-full max-w-lg my-8 gap-4 border border-border bg-background p-6 shadow-lg duration-200 sm:rounded-lg md:w-full',
+            'relative z-50 grid grid-cols-[minmax(0,1fr)] w-full max-w-[calc(100%-2rem)] sm:max-w-lg my-8 gap-4 border border-border bg-background p-6 shadow-lg duration-200 sm:rounded-lg md:w-full',
             props.class,
           )
         "

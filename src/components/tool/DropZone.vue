@@ -96,7 +96,7 @@ onUnmounted(() => window.removeEventListener('paste', onPaste))
         @change="ingest(($event.target as HTMLInputElement).files); ($event.target as HTMLInputElement).value = ''"
       />
 
-      <div class="pointer-events-none flex flex-col items-center gap-2">
+      <div class="pointer-events-none flex max-w-full flex-col items-center gap-2">
         <span
           class="flex size-11 items-center justify-center rounded-full transition-colors duration-200"
           :class="dragging ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'"
@@ -106,7 +106,8 @@ onUnmounted(() => window.removeEventListener('paste', onPaste))
         <p class="text-sm font-medium">
           {{ dragging ? '松开即可添加' : importing ? '正在导入…' : '拖拽文件到此处' }}
         </p>
-        <p class="text-xs text-muted-foreground">
+        <!-- Centred flex items keep their one-line width; cap it so a long accept list wraps in narrow columns. -->
+        <p class="max-w-full text-xs text-muted-foreground [overflow-wrap:anywhere]">
           也可以点击选择、或直接 {{ pasteChord }}+V 粘贴
           <template v-if="accept.length"> · 接受 {{ accept.join('、') }}</template>
         </p>

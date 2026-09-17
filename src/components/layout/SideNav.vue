@@ -4,7 +4,8 @@
  *
  * Pins live in settings (they are a preference, not workspace state) and are
  * keyed by `pluginId/toolId` so they survive a plugin update but disappear
- * cleanly when a plugin is uninstalled.
+ * cleanly when a plugin is uninstalled. Pinned workflows share the list as
+ * `flow:<id>`, so tools and workflows can be ordered together.
  *
  * `variant="sheet"` is the touch layout: larger targets, no drag-to-reorder
  * (HTML5 drag events do not fire from touch), no collapse control, and the
@@ -16,6 +17,7 @@ import Icon from '@/components/common/Icon.vue'
 import { Button } from '@/components/ui/button'
 import { allTools, registryState, type ToolEntry } from '@/core/plugin/registry'
 import { settings } from '@/core/settings'
+import { PIN_PREFIX, pipelines } from '@/core/pipelines'
 import { CATEGORY_LABEL, type ToolCategory } from '@/core/types'
 
 const props = withDefaults(defineProps<{ collapsed?: boolean; variant?: 'rail' | 'sheet' }>(), {
@@ -57,8 +59,28 @@ const grouped = computed(() => {
   }))
 })
 
-const pinnedTools = computed(() =>
-  settings.pinned.map((key) => allTools.value.find((entry) => entry.key === key)).filter((e): e is ToolEntry => !!e),
+interface PinnedItem {
+  key: string
+  to: string
+  name: string
+  title: string
+  icon: string
+  active: boolean
+}
+
+/** Pins that still resolve; a pin whose plugin or workflow is gone is simply not shown. */
+const pinnedItems = computed<PinnedItem[]>(() =>
+  settings.pinned.flatMap((key): PinnedItem[] => {
+    if (key.startsWith(PIN_PREFIX)) {
+      const pipeline = pipelines.find((p) => p.id === key.slice(PIN_PREFIX.length))
+      if (!pipeline) return []
+      const to = `/flows/${pipeline.id}`
+      return [{ key, to, name: pipeline.name, title: `${pipeline.name} · 工作流`, icon: 'workflow', active: route.path === to }]
+    }
+    const entry = allTools.value.find((e) => e.key === key)
+    if (!entry) return []
+    return [{ key, to: `/t/${entry.pluginId}/${entry.tool.id}`, name: entry.tool.name, title: entry.tool.name, icon: entry.tool.icon ?? 'package', active: isActive(entry) }]
+  }),
 )
 
 const expanded = ref(new Set<ToolCategory>(ORDER))
@@ -80,9 +102,13 @@ function onDrop(index: number) {
   const from = dragIndex.value
   dragIndex.value = dropIndex.value = null
   if (from === null || from === index) return
-  const next = [...settings.pinned]
-  const [moved] = next.splice(from, 1)
-  next.splice(index, 0, moved)
+  // Indices are into the *shown* pins; unresolved pins stay in settings, so
+  // move by key rather than by position.
+  const movedKey = pinnedItems.value[from].key
+  const targetKey = pinnedItems.value[index].key
+  const next = settings.pinned.filter((k) => k !== movedKey)
+  const at = next.indexOf(targetKey)
+  next.splice(from < index ? at + 1 : at, 0, movedKey)
   settings.pinned = next
 }
 
@@ -127,12 +153,12 @@ const APP_LINKS = [
       </section>
 
       <!-- Pinned -->
-      <section v-if="pinnedTools.length > 0">
+      <section v-if="pinnedItems.length > 0">
         <p v-if="!compact" class="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">置顶</p>
         <ul class="space-y-0.5">
           <li
-            v-for="(entry, index) in pinnedTools"
-            :key="entry.key"
+            v-for="(item, index) in pinnedItems"
+            :key="item.key"
             :draggable="!sheet"
             class="group/pin rounded-md transition-all duration-150"
             :class="[
@@ -145,9 +171,10 @@ const APP_LINKS = [
             @dragend="dragIndex = dropIndex = null"
           >
             <RouterLink
-              :to="`/t/${entry.pluginId}/${entry.tool.id}`"
-              :class="[itemClass, isActive(entry) ? 'bg-primary/10 font-medium text-primary' : 'hover:bg-muted']"
-              :title="entry.tool.name"
+              :to="item.to"
+              :class="[itemClass, item.active ? 'bg-primary/10 font-medium text-primary' : 'hover:bg-muted']"
+              :title="item.title"
+              :data-pinned="item.key"
               @click="emit('navigate')"
             >
               <Icon
@@ -156,15 +183,15 @@ const APP_LINKS = [
                 :size="12"
                 class="shrink-0 cursor-grab text-muted-foreground/40 opacity-0 transition-opacity group-hover/pin:opacity-100"
               />
-              <Icon :name="entry.tool.icon ?? 'package'" :size="iconSize" class="shrink-0" />
-              <span v-if="!compact" class="truncate">{{ entry.tool.name }}</span>
+              <Icon :name="item.icon" :size="iconSize" class="shrink-0" />
+              <span v-if="!compact" class="truncate">{{ item.name }}</span>
               <button
                 v-if="!compact"
                 type="button"
                 class="ml-auto shrink-0 transition-opacity hover:text-destructive"
                 :class="sheet ? 'p-1 opacity-60' : 'opacity-0 group-hover/pin:opacity-100'"
                 aria-label="取消置顶"
-                @click.prevent.stop="unpin(entry.key)"
+                @click.prevent.stop="unpin(item.key)"
               >
                 <Icon name="pin-off" :size="sheet ? 15 : 12" />
               </button>

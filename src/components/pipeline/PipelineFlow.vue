@@ -5,9 +5,12 @@
  *   [输入文件] ──▶ [步骤 1] ──▶ [步骤 2] ──▶ … ──▶ [结果]
  *
  * It edits the same `PipelineStep[]` the list editor does, so the two views
- * are interchangeable. The canvas pans (drag the background, or scroll) and
- * zooms (Ctrl/⌘ + scroll, the zoom buttons, or 「适应」); nodes lay out left
- * to right automatically, since a pipeline is a sequence. A connector's 「+」
+ * are interchangeable. The canvas pans (drag the background, or scroll in any
+ * direction) and zooms (Ctrl/⌘ + scroll, the zoom buttons, or 「适应」). Nodes
+ * start in an automatic left-to-right row; dragging a node moves it anywhere,
+ * and the position is saved with the pipeline (「自动排列」 clears them).
+ * Connectors follow the nodes, leaving from whichever side faces the next
+ * node. A connector's 「+」
  * inserts a step at that point; selecting a step opens its parameters in the
  * inspector beside the canvas. During a run, nodes take the step's state and
  * connectors show how many files passed along them.
@@ -19,7 +22,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { findTool } from '@/core/plugin/registry'
 import { defaultParams } from '@/core/plugin/params'
-import { stepIneligibility, type PipelineRun, type PipelineStep } from '@/core/pipelines'
+import { stepIneligibility, type NodePosition, type PipelineRun, type PipelineStep } from '@/core/pipelines'
 import { CATEGORY_LABEL, type ParamValues } from '@/core/types'
 
 const props = defineProps<{
@@ -27,6 +30,10 @@ const props = defineProps<{
   run?: PipelineRun
   inputCount: number
   cleanup: boolean
+  /** Saved node positions; see `Pipeline.layout`. */
+  layout: Record<string, NodePosition>
+  /** Fill the parent's height instead of a fixed canvas height (full-screen editor). */
+  fill?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -34,12 +41,16 @@ const emit = defineEmits<{
   insert: [index: number]
   remove: [index: number]
   move: [index: number, delta: number]
+  /** The whole new layout, after a drag or an auto-arrange. */
+  layout: [layout: Record<string, NodePosition>]
 }>()
 
 const NODE_W = 248
 const NODE_H = 132
 const GAP = 88
 const PAD = 48
+/** Dragged nodes snap to this grid, matching the dotted background. */
+const SNAP = 12
 
 const selectedId = ref<string | null>(null)
 const selectedIndex = computed(() => props.steps.findIndex((s) => s.id === selectedId.value))
@@ -62,33 +73,113 @@ interface FlowNode {
   y: number
 }
 
+/** The node being dragged and where it is now; committed to `layout` on release. */
+const dragging = ref<{ key: string; x: number; y: number } | null>(null)
+
 const nodes = computed<FlowNode[]>(() => {
-  const list: FlowNode[] = [{ key: 'input', kind: 'input', index: -1, x: PAD, y: PAD }]
-  props.steps.forEach((step, i) => list.push({ key: step.id, kind: 'step', index: i, x: PAD + (i + 1) * (NODE_W + GAP), y: PAD }))
-  list.push({ key: 'output', kind: 'output', index: props.steps.length, x: PAD + (props.steps.length + 1) * (NODE_W + GAP), y: PAD })
-  return list
+  const keys: Array<Pick<FlowNode, 'key' | 'kind' | 'index'>> = [
+    { key: 'input', kind: 'input', index: -1 },
+    ...props.steps.map((step, i) => ({ key: step.id, kind: 'step' as const, index: i })),
+    { key: 'output', kind: 'output', index: props.steps.length },
+  ]
+  return keys.map((node, slot) => {
+    const position =
+      dragging.value?.key === node.key ? dragging.value : (props.layout[node.key] ?? { x: PAD + slot * (NODE_W + GAP), y: PAD })
+    return { ...node, x: position.x, y: position.y }
+  })
 })
 
-const contentWidth = computed(() => PAD * 2 + nodes.value.length * NODE_W + (nodes.value.length - 1) * GAP)
-const contentHeight = NODE_H + PAD * 2
+const bounds = computed(() => {
+  const xs = nodes.value.map((n) => n.x)
+  const ys = nodes.value.map((n) => n.y)
+  const minX = Math.min(...xs) - PAD
+  const minY = Math.min(...ys) - PAD
+  return { minX, minY, width: Math.max(...xs) + NODE_W + PAD - minX, height: Math.max(...ys) + NODE_H + PAD - minY }
+})
+
+type Side = 'left' | 'right' | 'top' | 'bottom'
+const DIRECTION: Record<Side, [number, number]> = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] }
+
+function port(node: FlowNode, side: Side) {
+  const [dx, dy] = DIRECTION[side]
+  return { x: node.x + NODE_W / 2 + (dx * NODE_W) / 2, y: node.y + NODE_H / 2 + (dy * NODE_H) / 2 }
+}
 
 /** Connector `i` runs into step `i` (or into the result node when `i === steps.length`). */
 const edges = computed(() =>
   nodes.value.slice(1).map((to, i) => {
     const from = nodes.value[i]
-    const x1 = from.x + NODE_W
-    const y1 = from.y + NODE_H / 2
-    const x2 = to.x
-    const y2 = to.y + NODE_H / 2
-    const bend = GAP * 0.5
+    // Leave from the side facing the next node: stacked nodes connect bottom to
+    // top, side-by-side ones right to left (or left to right when reversed).
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const vertical = Math.abs(dy) / NODE_H > Math.abs(dx) / NODE_W
+    const [out, into]: [Side, Side] = vertical ? (dy > 0 ? ['bottom', 'top'] : ['top', 'bottom']) : dx >= 0 ? ['right', 'left'] : ['left', 'right']
+    const a = port(from, out)
+    const b = port(to, into)
+    const bend = Math.max(40, Math.hypot(b.x - a.x, b.y - a.y) * 0.4)
+    const [ox, oy] = DIRECTION[out]
+    const [ix, iy] = DIRECTION[into]
     return {
       index: i,
-      path: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`,
-      mid: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 },
+      path: `M ${a.x} ${a.y} C ${a.x + ox * bend} ${a.y + oy * bend}, ${b.x + ix * bend} ${b.y + iy * bend}, ${b.x} ${b.y}`,
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       to,
     }
   }),
 )
+
+/* ----------------------------------------------------------- node dragging */
+
+let nodeDrag: { key: string; pointerId: number; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null = null
+/** A drag ends with a click on the same node; that click must not count. */
+let suppressClick = false
+
+function onNodePointerDown(event: PointerEvent, node: FlowNode) {
+  if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
+  nodeDrag = { key: node.key, pointerId: event.pointerId, sx: event.clientX, sy: event.clientY, ox: node.x, oy: node.y, moved: false }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+
+function onNodePointerMove(event: PointerEvent) {
+  if (!nodeDrag || event.pointerId !== nodeDrag.pointerId) return
+  const dx = (event.clientX - nodeDrag.sx) / view.value.k
+  const dy = (event.clientY - nodeDrag.sy) / view.value.k
+  if (!nodeDrag.moved && Math.hypot(dx, dy) * view.value.k < 4) return
+  nodeDrag.moved = true
+  dragging.value = {
+    key: nodeDrag.key,
+    x: Math.round((nodeDrag.ox + dx) / SNAP) * SNAP,
+    y: Math.round((nodeDrag.oy + dy) / SNAP) * SNAP,
+  }
+}
+
+function onNodePointerUp(event: PointerEvent) {
+  if (!nodeDrag || event.pointerId !== nodeDrag.pointerId) return
+  if (nodeDrag.moved && dragging.value) {
+    // Pin every node where it is shown now, so dragging one never makes the
+    // automatically placed ones jump when steps are later added or removed.
+    const next: Record<string, NodePosition> = {}
+    for (const node of nodes.value) next[node.key] = { x: node.x, y: node.y }
+    emit('layout', next)
+    suppressClick = true
+    setTimeout(() => (suppressClick = false), 0)
+  }
+  nodeDrag = null
+  dragging.value = null
+}
+
+function selectNode(id: string) {
+  if (suppressClick) return
+  selectedId.value = id
+}
+
+function autoArrange() {
+  emit('layout', {})
+  void nextTick(fit)
+}
+
+const arranged = computed(() => Object.keys(props.layout).length > 0)
 
 /* ------------------------------------------------------------- pan & zoom */
 
@@ -104,9 +195,14 @@ function fit() {
   const el = viewport.value
   if (!el) return
   const { width, height } = el.getBoundingClientRect()
-  const k = Math.min(1, Math.max(FIT_MIN_K, Math.min(width / contentWidth.value, height / contentHeight)))
-  // Centre when everything fits; otherwise start at the input node and let the user pan.
-  view.value = { k, x: Math.max(0, (width - contentWidth.value * k) / 2), y: Math.max(0, (height - contentHeight * k) / 2) }
+  const box = bounds.value
+  const k = Math.min(1, Math.max(FIT_MIN_K, Math.min(width / box.width, height / box.height)))
+  // Centre when everything fits; otherwise start at the top-left corner and let the user pan.
+  view.value = {
+    k,
+    x: Math.max(0, (width - box.width * k) / 2) - box.minX * k,
+    y: Math.max(0, (height - box.height * k) / 2) - box.minY * k,
+  }
 }
 
 function zoomAt(factor: number, cx?: number, cy?: number) {
@@ -125,10 +221,11 @@ function onWheel(event: WheelEvent) {
   if (event.ctrlKey || event.metaKey) {
     const rect = viewport.value!.getBoundingClientRect()
     zoomAt(Math.exp(-event.deltaY * 0.0015), event.clientX - rect.left, event.clientY - rect.top)
+  } else if (event.shiftKey && !event.deltaX) {
+    // Shift turns a plain mouse wheel sideways.
+    view.value = { ...view.value, x: view.value.x - event.deltaY }
   } else {
-    // A mouse wheel scrolls vertically; along a left-to-right flow that should move sideways.
-    const dx = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX || event.deltaY : event.deltaY
-    view.value = { ...view.value, x: view.value.x - dx }
+    view.value = { ...view.value, x: view.value.x - event.deltaX, y: view.value.y - event.deltaY }
   }
 }
 
@@ -259,9 +356,13 @@ function edgeLabel(index: number): string {
 </script>
 
 <template>
-  <div class="flex flex-col overflow-hidden rounded-xl border border-border bg-card lg:h-[clamp(24rem,56vh,40rem)] lg:flex-row" data-pipeline-flow>
+  <div
+    class="relative flex flex-col overflow-hidden rounded-xl border border-border bg-card lg:flex-row"
+    :class="fill ? 'lg:h-full' : 'lg:h-[clamp(24rem,56vh,40rem)]'"
+    data-pipeline-flow
+  >
     <!-- Canvas -->
-    <div class="relative h-[24rem] min-w-0 flex-1 lg:h-auto">
+    <div class="relative min-w-0 flex-1 lg:h-auto" :class="fill ? 'h-[60dvh]' : 'h-[24rem]'">
       <div
         ref="viewport"
         class="flow-grid absolute inset-0 cursor-grab touch-none overflow-hidden outline-none active:cursor-grabbing"
@@ -276,10 +377,10 @@ function edgeLabel(index: number): string {
       >
         <div
           class="absolute left-0 top-0 origin-top-left"
-          :style="{ width: `${contentWidth}px`, height: `${contentHeight}px`, transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }"
+          :style="{ width: '1px', height: '1px', transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }"
         >
           <!-- Connectors -->
-          <svg class="pointer-events-none absolute inset-0 overflow-visible" :width="contentWidth" :height="contentHeight">
+          <svg class="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1">
             <defs>
               <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" class="fill-muted-foreground/60" />
@@ -329,8 +430,15 @@ function edgeLabel(index: number): string {
             <!-- Input -->
             <div
               v-if="node.kind === 'input'"
-              class="absolute flex flex-col rounded-xl border border-dashed border-border bg-background/90 p-3 shadow-sm"
+              class="absolute flex cursor-grab touch-none select-none flex-col rounded-xl border border-dashed border-border bg-background/90 p-3 shadow-sm active:cursor-grabbing"
+              :class="dragging?.key === node.key ? 'z-10 shadow-lg' : ''"
               :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` }"
+              data-flow-interactive
+              data-flow-io="input"
+              @pointerdown="onNodePointerDown($event, node)"
+              @pointermove="onNodePointerMove"
+              @pointerup="onNodePointerUp"
+              @pointercancel="onNodePointerUp"
             >
               <div class="flex items-center gap-2">
                 <span class="flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon name="upload" :size="15" /></span>
@@ -345,8 +453,9 @@ function edgeLabel(index: number): string {
             <!-- Step -->
             <div
               v-else-if="node.kind === 'step'"
-              class="absolute flex cursor-pointer flex-col rounded-xl border bg-background p-3 text-left shadow-sm transition-shadow hover:shadow-md"
+              class="absolute flex cursor-grab touch-none select-none flex-col rounded-xl border bg-background p-3 text-left shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing"
               :class="[
+                dragging?.key === node.key ? 'z-10 shadow-lg' : '',
                 NODE_TONE[stepState(node.index) ?? 'pending'],
                 selectedId === steps[node.index].id ? 'ring-2 ring-primary/40' : '',
                 problemOf(steps[node.index]) ? 'border-destructive/60' : '',
@@ -357,8 +466,12 @@ function edgeLabel(index: number): string {
               :aria-pressed="selectedId === steps[node.index].id"
               data-flow-interactive
               data-flow-node
-              @click="selectedId = steps[node.index].id"
-              @keydown.enter="selectedId = steps[node.index].id"
+              @pointerdown="onNodePointerDown($event, node)"
+              @pointermove="onNodePointerMove"
+              @pointerup="onNodePointerUp"
+              @pointercancel="onNodePointerUp"
+              @click="selectNode(steps[node.index].id)"
+              @keydown.enter="selectNode(steps[node.index].id)"
             >
               <div class="flex items-center gap-2">
                 <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -395,9 +508,18 @@ function edgeLabel(index: number): string {
             <!-- Output -->
             <div
               v-else
-              class="absolute flex flex-col rounded-xl border bg-background/90 p-3 shadow-sm"
-              :class="run?.status === 'done' ? 'border-success/60' : run?.status === 'failed' ? 'border-destructive/60' : 'border-dashed border-border'"
+              class="absolute flex cursor-grab touch-none select-none flex-col rounded-xl border bg-background/90 p-3 shadow-sm active:cursor-grabbing"
+              :class="[
+                run?.status === 'done' ? 'border-success/60' : run?.status === 'failed' ? 'border-destructive/60' : 'border-dashed border-border',
+                dragging?.key === node.key ? 'z-10 shadow-lg' : '',
+              ]"
               :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` }"
+              data-flow-interactive
+              data-flow-io="output"
+              @pointerdown="onNodePointerDown($event, node)"
+              @pointermove="onNodePointerMove"
+              @pointerup="onNodePointerUp"
+              @pointercancel="onNodePointerUp"
             >
               <div class="flex items-center gap-2">
                 <span class="flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon name="download" :size="15" /></span>
@@ -420,14 +542,28 @@ function edgeLabel(index: number): string {
         <span class="w-10 text-center text-[11px] tabular-nums text-muted-foreground">{{ Math.round(view.k * 100) }}%</span>
         <Button variant="ghost" size="icon" class="size-7" aria-label="放大" @click="zoomAt(1.2)"><Icon name="maximize" :size="13" /></Button>
         <Button variant="ghost" size="xs" class="h-7" title="适应画布（Ctrl/⌘ 0）" @click="fit">适应</Button>
+        <Button v-if="arranged" variant="ghost" size="xs" class="h-7" title="清除手动摆放的位置，恢复从左到右的自动布局" data-flow-auto-arrange @click="autoArrange">
+          <Icon name="layout-grid" :size="12" />
+          自动排列
+        </Button>
       </div>
       <p class="pointer-events-none absolute bottom-3 right-3 hidden text-[10px] text-muted-foreground xl:block">
-        拖动画布平移 · Ctrl/⌘ + 滚轮缩放 · Delete 删除选中步骤
+        拖动节点摆放位置 · 拖动画布或滚轮平移 · Ctrl/⌘ + 滚轮缩放 · Delete 删除选中步骤
       </p>
     </div>
 
     <!-- Inspector -->
-    <aside class="flex max-h-[32rem] w-full shrink-0 flex-col border-t border-border lg:max-h-none lg:w-80 lg:border-l lg:border-t-0" data-flow-inspector>
+    <!-- Full-screen, the canvas keeps the width: the inspector floats over it while a step is selected. -->
+    <aside
+      v-if="!fill || selected || !steps.length"
+      class="flex w-full shrink-0 flex-col"
+      :class="
+        fill
+          ? 'max-h-[32rem] border-t border-border lg:absolute lg:bottom-3 lg:right-3 lg:top-3 lg:max-h-none lg:w-80 lg:rounded-xl lg:border lg:bg-card lg:shadow-lg'
+          : 'max-h-[32rem] border-t border-border lg:max-h-none lg:w-80 lg:border-l lg:border-t-0'
+      "
+      data-flow-inspector
+    >
       <template v-if="selected">
         <div class="flex items-center gap-2 border-b border-border px-4 py-3">
           <span class="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -437,6 +573,9 @@ function edgeLabel(index: number): string {
             <p class="truncate text-sm font-semibold">{{ toolOf(selected)?.tool.name ?? selected.toolKey }}</p>
             <p class="truncate text-[11px] text-muted-foreground">第 {{ selectedIndex + 1 }} 步 · {{ toolOf(selected)?.pluginName }}</p>
           </div>
+          <Button variant="ghost" size="icon" class="size-7 shrink-0" aria-label="关闭检查器" title="关闭（Esc）" @click="selectedId = null">
+            <Icon name="x" :size="14" />
+          </Button>
         </div>
         <div class="min-h-0 flex-1 space-y-3 overflow-y-auto scroll-slim px-4 py-4">
           <p v-if="toolOf(selected)?.tool.description" class="text-[11px] leading-relaxed text-muted-foreground">{{ toolOf(selected)!.tool.description }}</p>
