@@ -77,6 +77,7 @@ src/
 ├─ plugins/builtin/   # 原生内置工具（与第三方扩展使用完全相同的开放 API）
 ├─ components/        # 全局 Vue 组件库（ui/ 为无样式原子化的 shadcn-vue 组件）
 └─ views/             # 核心视图路由页面
+extensions/           # 随仓库维护、按需订阅的联网扩展（不进入构建产物），如 AI 扩展工具箱
 sdk/                  # 官方开放插件类型定义库 omnitool-plugin.d.ts
 scripts/              # 构建辅助工具链：vendor.mjs (运行时包体整理), llms.mjs (AI 知识库提取)
 docs/                 # 核心架构设计方案、教程规范与版本纪要，详见 docs/README.md
@@ -113,7 +114,7 @@ e2e/                  # Playwright 驱动的全链路回归套件及测试素材
 | 端到端测试 | `e2e/*.mjs` | 真实浏览器沙盒隔离、Canvas 像素吞吐、FFmpeg 线程生命周期与复合交互 |
 
 - 插件单测基于 `tests/harness/plugin.ts` 运行环境，在 Node 环境中对等加载插件源码并挂载内存虚拟文件系统。
-- 端到端测试覆盖 `smoke`（冒烟）、`tools`（全量内置工具）、`ui`（视图响应）、`flows`（工作流管道）、`editor`（编辑器诊断）及 `ai`（端侧推理模型）。其中 `ai` 套件需要在线下拉测试权重，本地调试可通过设置 `OMNITOOL_E2E_OFFLINE=1` 予以跳过。
+- 端到端测试覆盖 `smoke`（冒烟）、`tools`（全量内置工具）、`ui`（视图响应）、`flows`（工作流管道）、`editor`（编辑器诊断）、`extensions`（订阅扩展与模拟的 OpenAI 兼容接口）及 `ai`（端侧推理模型）。其中 `ai` 套件需要在线下拉测试权重，本地调试可通过设置 `OMNITOOL_E2E_OFFLINE=1` 予以跳过。
 
 发起 Pull Request 之前的本地最低验证门槛：
 

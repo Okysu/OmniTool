@@ -8,6 +8,8 @@ export interface ToastInput {
   level?: ToastLevel
   /** Auto-dismiss delay in ms; 0 keeps it until dismissed. */
   timeout?: number
+  /** Reusing an id replaces that toast in place instead of stacking a new one. */
+  id?: string
 }
 
 /**
@@ -23,7 +25,7 @@ export function pushToast(input: ToastInput): string | number {
 
   // With a title present, sonner renders `message` as the description - which is
   // exactly the containment we want for untrusted plugin text.
-  const options = input.title ? { description: input.message, duration } : { duration }
+  const options = input.title ? { description: input.message, duration, id: input.id } : { duration, id: input.id }
   const headline = input.title ?? input.message
 
   switch (level) {

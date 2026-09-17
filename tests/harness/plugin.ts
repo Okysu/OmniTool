@@ -52,6 +52,8 @@ export interface RunResult {
   notifications: string[]
   /** Every `host.ffmpeg.run` call, in order, with input ids mapped back to file names. */
   ffmpeg: FfmpegCall[]
+  /** Every `host.net.fetch` call that reached the network, in order. */
+  requests: NetRequest[]
 }
 
 export interface RunOptions {
@@ -59,6 +61,28 @@ export interface RunOptions {
   probe?: Record<string, Partial<ProbeResult>>
   /** Makes a matching `host.ffmpeg.run` call reject, to test cleanup paths. */
   fail?: (call: FfmpegCall) => boolean
+  /** Answers `host.net.fetch`. Without it every request rejects like an offline network. */
+  fetch?: (request: NetRequest) => FakeResponse | Promise<FakeResponse>
+}
+
+/** A request as it left the host: secret placeholders already substituted. */
+export interface NetRequest {
+  url: string
+  method: string
+  headers: Record<string, string>
+  /** Text bodies as strings, binary bodies as bytes. */
+  body: string | Uint8Array | undefined
+  /** The body parsed as JSON, when it is JSON. */
+  json: any
+  /** Plaintext of a text body or the decoded bytes, for multipart assertions. */
+  text: string
+}
+
+export interface FakeResponse {
+  status?: number
+  headers?: Record<string, string>
+  /** Objects are sent as JSON. */
+  body?: string | Uint8Array | object
 }
 
 /** What a fake panel session recorded. */
@@ -148,6 +172,37 @@ export function loadPlugin(file: string, deps: string[] = []) {
     remove: async (key: string) => void kvStore.delete(key),
     keys: async () => [...kvStore.keys()],
   }
+  /**
+   * `host.secret`, mirroring the vault's rules: `request` resolves at once for
+   * an existing secret unless `force`, and a placeholder is only substituted
+   * for an origin the secret is bound to - otherwise the request fails closed.
+   * `secretAnswer` plays the user in the host dialog (`null` = cancel).
+   */
+  const secretStore = new Map<string, { label: string; origins: string[]; value: string; createdAt: number }>()
+  let secretAnswer: (name: string, options: { origins: string[]; label?: string; hint?: string; force?: boolean }) => string | null = () => null
+  const secretPrompts: Array<{ name: string; origins: string[]; label?: string; hint?: string; force?: boolean }> = []
+  const secret = {
+    request: async (name: string, options: { origins: string[]; label?: string; hint?: string; force?: boolean }) => {
+      if (!options?.origins?.length) throw new Error('必须声明 origins：凭据只能发往你明确列出的域名')
+      if (secretStore.has(name) && options.force !== true) return true
+      secretPrompts.push({ name, ...options })
+      const value = secretAnswer(name, options)
+      if (value === null) return false
+      secretStore.set(name, { label: options.label ?? name, origins: [...options.origins], value, createdAt: Date.now() })
+      return true
+    },
+    has: async (name: string) => secretStore.has(name),
+    list: async () => [...secretStore.entries()].map(([name, s]) => ({ name, label: s.label, origins: [...s.origins], createdAt: s.createdAt })),
+    remove: async (name: string) => void secretStore.delete(name),
+  }
+  const substitute = (text: string, origin: string) =>
+    text.replace(/\{\{secret:([A-Za-z0-9._-]+)\}\}/g, (_, name: string) => {
+      const stored = secretStore.get(name)
+      if (!stored) throw new Error(`插件引用了不存在的凭据「${name}」，请先通过 host.secret.request() 录入`)
+      if (!stored.origins.includes(origin)) throw new Error(`已阻止：凭据「${name}」只允许发往 ${stored.origins.join('、')}，但本次请求的目标是 ${origin}`)
+      return stored.value
+    })
+
   /** Names passed to `host.fs.remove` in the most recent run, even one that threw. */
   let lastRemoved: string[] = []
   for (const dep of deps) {
@@ -226,7 +281,38 @@ export function loadPlugin(file: string, deps: string[] = []) {
     const inputRefs = inputs.map((input) => store(input.name, input.type ?? '', toBytes(input.content)))
     const initial = new Set(files.keys())
 
+    const requests: NetRequest[] = []
+    const fetchImpl = async (rawUrl: string, init: { method?: string; headers?: Record<string, string>; body?: unknown } = {}) => {
+      const url = new URL(rawUrl)
+      const headers: Record<string, string> = {}
+      for (const [key, value] of Object.entries(init.headers ?? {})) headers[key] = substitute(String(value), url.origin)
+      const body = init.body === undefined ? undefined : typeof init.body === 'string' ? substitute(init.body, url.origin) : toBytes(init.body).slice()
+      const text = typeof body === 'string' ? body : body ? new TextDecoder().decode(body) : ''
+      let json: unknown
+      try {
+        json = typeof body === 'string' ? JSON.parse(body) : undefined
+      } catch {
+        json = undefined
+      }
+      const request = { url: rawUrl, method: init.method ?? 'GET', headers, body, json, text }
+      if (!options.fetch) throw new Error('Failed to fetch')
+      requests.push(request)
+      const response = await options.fetch(request)
+      const status = response.status ?? 200
+      const payload = response.body === undefined ? new Uint8Array()
+        : typeof response.body === 'string' ? new TextEncoder().encode(response.body)
+        : response.body instanceof Uint8Array ? response.body
+        : new TextEncoder().encode(JSON.stringify(response.body))
+      return { status, ok: status >= 200 && status < 300, headers: response.headers ?? {}, body: payload }
+    }
+
     const host = {
+      net: {
+        fetch: fetchImpl,
+        fetchText: async (url: string, init?: never) => new TextDecoder().decode((await fetchImpl(url, init)).body),
+        fetchJSON: async (url: string, init?: never) => JSON.parse(new TextDecoder().decode((await fetchImpl(url, init)).body)),
+      },
+      secret,
       fs: {
         read: async (id: string, offset = 0, length = -1) => {
           const bytes = get(id).bytes
@@ -304,7 +390,7 @@ export function loadPlugin(file: string, deps: string[] = []) {
       .map((ref) => get(typeof ref === 'string' ? ref : ref.id))
       .filter((file) => !initial.has(file.id))
       .map((file) => ({ name: file.name, type: file.type, bytes: file.bytes, text: new TextDecoder().decode(file.bytes) }))
-    return { summary: Array.isArray(result) ? '' : (result.summary ?? ''), outputs, notifications, ffmpeg: ffmpegCalls }
+    return { summary: Array.isArray(result) ? '' : (result.summary ?? ''), outputs, notifications, ffmpeg: ffmpegCalls, requests }
   }
 
   /**
@@ -350,6 +436,7 @@ export function loadPlugin(file: string, deps: string[] = []) {
           blob: async (id: string, type?: string) => new Blob([contentOf(id)], { type }),
         },
         kv,
+        secret,
         ui: { notify: async () => {} },
       },
       state: session.state,
@@ -368,5 +455,18 @@ export function loadPlugin(file: string, deps: string[] = []) {
     return session
   }
 
-  return { run, openPanel, lastRemoved: () => lastRemoved, tools: plugin.tools }
+  return {
+    run,
+    openPanel,
+    lastRemoved: () => lastRemoved,
+    tools: plugin.tools,
+    kv,
+    /** The fake credential vault: seed it, script the user's answer, inspect prompts. */
+    secrets: {
+      set: (name: string, value: string, origins: string[]) => void secretStore.set(name, { label: name, origins, value, createdAt: Date.now() }),
+      get: (name: string) => secretStore.get(name),
+      answer: (fn: typeof secretAnswer) => void (secretAnswer = fn),
+      prompts: secretPrompts,
+    },
+  }
 }

@@ -31,7 +31,7 @@ try {
   await waitForServer()
   // Suites share one server and run in sequence; any failure fails the run.
   code = 0
-  for (const suite of ['smoke', 'tools', 'ui', 'flows', 'editor', 'ai']) {
+  for (const suite of ['smoke', 'tools', 'ui', 'flows', 'editor', 'extensions', 'ai']) {
     console.log(`\n===== ${suite} =====`)
     const child = spawn('node', [`e2e/${suite}.mjs`], { stdio: 'inherit', env: { ...process.env, BASE_URL: BASE } })
     const exit = await new Promise((resolve) => child.on('exit', resolve))

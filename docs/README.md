@@ -10,6 +10,7 @@ OmniTool 的文档分为四类。第一次接触项目，建议按「使用 → 
 | [Plugin API 参考](design/02-plugin-api.md) | 插件开发者 | 清单字段、表单与自定义面板、全部宿主能力、依赖、调试 |
 | [类型声明](../sdk/omnitool-plugin.d.ts) | 插件开发者 | 可直接放进自己的 IDE，获得补全与类型检查 |
 | [Plugin Guide（英文）](llms/plugin-guide.md) | AI 助手 | 构建时生成站点根目录的 `/llms.txt` 与 `/llms-full.txt` |
+| [订阅扩展](../extensions/README.md) | 使用者、插件开发者 | 不内置的联网扩展（AI 扩展工具箱）：订阅地址、服务商配置、本机模型跨域设置；也是一个完整的真实插件范例 |
 
 ## 设计
 
@@ -29,6 +30,7 @@ OmniTool 的文档分为四类。第一次接触项目，建议按「使用 → 
 | 第 3 轮 | 0.3.0 | [图片双引擎、可视化音视频编辑、AI 与归档](iterations/03-summary.md) | [测试场景](testing/03-test-scenarios.md) |
 | 第 4 轮 | 0.4.0 | [95 个工具、工作流、清零可做未做项](iterations/04-summary.md) | [测试场景](testing/04-test-scenarios.md) |
 | 第 5 轮 | 0.5.0 | [流程图、交互式教程、模型管理、部署](iterations/05-summary.md) | [测试场景](testing/05-test-scenarios.md) |
+| 第 6 轮 | 未发布 | [开源规范、AI 订阅扩展、插件持久化修复](iterations/06-summary.md) | [测试场景](testing/06-test-scenarios.md) |
 
 ## 项目规范
 

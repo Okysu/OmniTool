@@ -8,7 +8,7 @@
  * uninstalled. Dogfooding the plugin API this way is the point: if a built-in
  * tool cannot be written against the public API, the API is incomplete.
  */
-import { computed, reactive, shallowReactive } from 'vue'
+import { computed, reactive, shallowReactive, toRaw } from 'vue'
 import { get as idbGet, set as idbSet } from 'idb-keyval'
 import { SandboxHost } from '@/core/sandbox/host'
 import { analyzeSource, type RiskReport } from './analyze'
@@ -81,10 +81,22 @@ export function findTool(key: string): ToolEntry | undefined {
 /* -------------------------------------------------------------------------- */
 
 async function persist(): Promise<void> {
-  await idbSet(
-    STORE_KEY,
-    plugins.map((record) => ({ ...record })),
-  ).catch(() => {})
+  // Records are plain JSON by construction, but callers may hand them over
+  // wrapped in Vue proxies (the review dialog keeps its candidate in a `ref`),
+  // and IndexedDB refuses to clone a proxy. Store a detached snapshot - and
+  // never fail quietly: a record that is not saved is uninstalled on reload.
+  try {
+    await idbSet(
+      STORE_KEY,
+      plugins.map((record) => JSON.parse(JSON.stringify(toRaw(record))) as PluginRecord),
+    )
+  } catch (error) {
+    pushToast({
+      level: 'error',
+      title: '插件记录保存失败',
+      message: `刷新页面后安装或授权变更可能丢失：${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -181,7 +193,8 @@ export async function prepareInstall(
 }
 
 /** Phase 2: persist the plugin with exactly the capabilities the user ticked. */
-export async function commitInstall(candidate: InstallCandidate, grants: Capability[]): Promise<PluginRecord> {
+export async function commitInstall(proxied: InstallCandidate, grants: Capability[]): Promise<PluginRecord> {
+  const candidate = toRaw(proxied)
   const existing = findPlugin(candidate.manifest.id)
   if (existing?.origin === 'builtin' && candidate.origin !== 'builtin') {
     throw new Error(`「${existing.manifest.name}」是内置插件，不能被同 id 的外部插件覆盖`)

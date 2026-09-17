@@ -136,6 +136,16 @@ definePlugin({
 
 接口开发技术手册见 [Plugin API 手册](docs/design/02-plugin-api.md)，TypeScript 类型定义见 [`sdk/omnitool-plugin.d.ts`](sdk/omnitool-plugin.d.ts)。
 
+### 按需订阅的扩展
+
+需要联网的能力不进入内置工具，而是以订阅扩展的形式随仓库维护在 [`extensions/`](extensions/README.md) 目录中。**AI 扩展工具箱**连接任意 OpenAI 兼容接口（云端服务或本机 Ollama / LM Studio），提供 AI 翻译、摘要、信息抽取、视觉目标检测打标（导出 COCO / YOLO / LabelMe）、图片与 PDF 转 Markdown、云端语音转写等 21 个工具，API Key 由宿主凭据保管。
+
+在「插件与订阅 → 远程订阅」中添加：
+
+```text
+https://cdn.jsdelivr.net/gh/Okysu/OmniTool@main/extensions/index.json
+```
+
 ## 端侧安全沙盒模型
 
 为避免非受信第三方插件越权访问用户敏感数据或设备资源，OmniTool 建立了四重纵深防御机制：

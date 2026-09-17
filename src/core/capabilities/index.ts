@@ -200,6 +200,36 @@ const uiHandlers: Record<string, Handler> = {
 /* net                                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Every request that uses a stored credential is announced - the user should
+ * always be able to see a plugin spending their API key. A batch job sends
+ * dozens of requests in a row, though, and one toast each would bury the
+ * screen. Uses by the same plugin, origin and secrets within a short window
+ * update a single toast with a running count instead.
+ */
+const SECRET_NOTICE_WINDOW_MS = 15_000
+const secretNotices = new Map<string, { count: number; lastAt: number; toastId: string }>()
+
+function announceSecretUse(pluginId: string, pluginName: string, origin: string, secrets: string[]): void {
+  const key = `${pluginId}|${origin}|${[...secrets].sort().join(',')}`
+  const now = Date.now()
+  const previous = secretNotices.get(key)
+  const current =
+    previous && now - previous.lastAt < SECRET_NOTICE_WINDOW_MS
+      ? { ...previous, count: previous.count + 1, lastAt: now }
+      : { count: 1, lastAt: now, toastId: `secret-use-${key}-${now}` }
+  secretNotices.set(key, current)
+  pushToast({
+    id: current.toastId,
+    level: 'info',
+    title: pluginName,
+    message:
+      current.count === 1
+        ? `已向 ${origin} 发送请求并使用凭据：${secrets.join('、')}`
+        : `已向 ${origin} 发送 ${current.count} 次请求并使用凭据：${secrets.join('、')}`,
+  })
+}
+
 const PRIVATE_HOST_RE =
   /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|\[?f[cd])/i
 
@@ -274,13 +304,7 @@ const netHandlers: Record<string, Handler> = {
       outHeaders[key] = value
     })
 
-    if (usedSecrets.length > 0) {
-      pushToast({
-        level: 'info',
-        title: ctx.pluginName,
-        message: `已向 ${url.origin} 发送请求并使用凭据：${usedSecrets.join('、')}`,
-      })
-    }
+    if (usedSecrets.length > 0) announceSecretUse(ctx.pluginId, ctx.pluginName, url.origin, usedSecrets)
 
     return {
       value: { status: response.status, ok: response.ok, headers: outHeaders, body: buffer },

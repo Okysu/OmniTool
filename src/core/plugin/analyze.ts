@@ -54,7 +54,8 @@ const PATTERNS: Pattern[] = [
     label: '直接网络调用（将被拦截）',
     detail: '脚本直接调用了 fetch/XMLHttpRequest/WebSocket。沙盒 CSP 会拦截这些调用，插件可能无法正常工作。',
     level: 'medium',
-    regex: /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|importScripts)\s*\(/g,
+    // Bare calls only: `host.net.fetch(` is the sanctioned proxy, not a raw call.
+    regex: /(?<![.\w$])(?:fetch|XMLHttpRequest|WebSocket|EventSource|importScripts)\s*\(/g,
   },
   {
     id: 'kv',
@@ -108,6 +109,8 @@ const CAPABILITY_USAGE: Array<{ capability: Capability; regex: RegExp }> = [
   { capability: 'kv', regex: /host\s*\.\s*kv\s*\./ },
   { capability: 'image', regex: /host\s*\.\s*image\s*\./ },
   { capability: 'ffmpeg', regex: /host\s*\.\s*ffmpeg\s*\./ },
+  { capability: 'secret', regex: /host\s*\.\s*secret\s*\.|\{\{secret:/ },
+  { capability: 'onnx', regex: /host\s*\.\s*onnx\s*\./ },
 ]
 
 const RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 }
