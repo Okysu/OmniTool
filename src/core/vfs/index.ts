@@ -10,6 +10,11 @@
  *   1. OPFS   - bytes live on disk, survive a reload, no heap pressure.
  *   2. memory - Blob parts in a Map; used when OPFS or writable streams are
  *      unavailable (Safari main thread, private windows, older browsers).
+ *
+ * Importing content that is already stored does not store it again: the same
+ * file (same name, same bytes) returns the existing entry, and the same bytes
+ * under another name get a new entry that shares the stored bytes. Bytes are
+ * deleted when the last entry using them is removed.
  */
 import { reactive } from 'vue'
 import { del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval'
@@ -26,6 +31,8 @@ export interface VfsEntry {
   createdAt: number
   /** Which invocation produced this file; `null` for user-supplied inputs. */
   producedBy: string | null
+  /** Key of the stored bytes when shared with another entry (see `importFile`); otherwise the id. */
+  storage?: string
 }
 
 const META_KEY = 'omnitool.vfs.meta.v1'
@@ -51,6 +58,9 @@ export const vfsState = reactive({
 /* -------------------------------------------------------------------------- */
 
 let opfsDir: FileSystemDirectoryHandle | null = null
+
+/** Key of an entry's stored bytes; entries that share bytes share the key. */
+export const storageKey = (entry: VfsEntry) => entry.storage ?? entry.id
 const memoryBlobs = new Map<string, Blob>()
 /** Open write streams, keyed by entry id. */
 const writers = new Map<string, { chunks: BlobPart[]; stream?: FileSystemWritableFileStream }>()
@@ -94,7 +104,7 @@ export async function initVfs(): Promise<void> {
     // Drop metadata whose bytes are gone (storage eviction, manual clear).
     for (const entry of saved) {
       try {
-        await opfsDir.getFileHandle(entry.id)
+        await opfsDir.getFileHandle(storageKey(entry))
         entries.push(entry)
       } catch {
         /* orphaned metadata */
@@ -129,11 +139,11 @@ export async function blob(id: string): Promise<Blob> {
   const entry = get(id)
   if (!entry) throw new Error(`文件不存在：${id}`)
   if (opfsDir) {
-    const handle = await opfsDir.getFileHandle(entry.id)
+    const handle = await opfsDir.getFileHandle(storageKey(entry))
     const file = await handle.getFile()
     return file.slice(0, file.size, entry.type || file.type)
   }
-  const b = memoryBlobs.get(id)
+  const b = memoryBlobs.get(storageKey(entry))
   if (!b) throw new Error(`文件内容不存在：${id}`)
   return b
 }
@@ -163,12 +173,42 @@ export async function objectUrl(id: string): Promise<string> {
 /* Writes                                                                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * A second entry for the same stored bytes, for selecting one file twice (say,
+ * joining a clip with itself): each selection needs its own id, not a copy.
+ */
+export async function alias(id: string): Promise<VfsEntry> {
+  const source = get(id)
+  if (!source) throw new Error(`文件不存在：${id}`)
+  const entry: VfsEntry = { id: nanoid(), name: source.name, size: source.size, type: source.type, createdAt: Date.now(), producedBy: null, storage: storageKey(source) }
+  entries.push(entry)
+  await persistMeta()
+  return entry
+}
+
+/** Whether a file is still being written by a running invocation. */
+export function isWriting(id: string): boolean {
+  return writers.has(id)
+}
+
 export async function importFile(file: File): Promise<VfsEntry> {
+  const type = file.type || guessType(file.name)
+  const twin = await findIdentical(file)
+  if (twin) {
+    // An alias of a shared file is as good as the file itself.
+    if (twin.name === file.name && twin.producedBy === null) return twin
+    // Same bytes under another name (or equal to a result): a new entry, so
+    // tools see the name the user gave it, sharing what is already stored.
+    const alias: VfsEntry = { id: nanoid(), name: file.name, size: file.size, type, createdAt: Date.now(), producedBy: null, storage: storageKey(twin) }
+    entries.push(alias)
+    await persistMeta()
+    return alias
+  }
   const entry: VfsEntry = {
     id: nanoid(),
     name: file.name,
     size: file.size,
-    type: file.type || guessType(file.name),
+    type,
     createdAt: Date.now(),
     producedBy: null,
   }
@@ -251,13 +291,17 @@ export async function writeAll(
 export async function remove(id: string): Promise<void> {
   const idx = entries.findIndex((e) => e.id === id)
   if (idx === -1) return
-  entries.splice(idx, 1)
+  const [entry] = entries.splice(idx, 1)
   revokeUrl(id)
-  memoryBlobs.delete(id)
   const w = writers.get(id)
   if (w?.stream) await w.stream.abort().catch(() => {})
   writers.delete(id)
-  if (opfsDir) await opfsDir.removeEntry(id).catch(() => {})
+  // Shared bytes stay until no entry uses them.
+  const key = storageKey(entry)
+  if (!entries.some((other) => storageKey(other) === key)) {
+    memoryBlobs.delete(key)
+    if (opfsDir) await opfsDir.removeEntry(key).catch(() => {})
+  }
   await persistMeta()
 }
 
@@ -267,9 +311,17 @@ export async function clear(): Promise<void> {
   await idbDel(META_KEY).catch(() => {})
 }
 
-/** Total bytes currently held. */
+/** Total bytes currently held; bytes shared by several entries count once. */
 export function usedBytes(): number {
-  return entries.reduce((sum, e) => sum + e.size, 0)
+  const seen = new Set<string>()
+  let total = 0
+  for (const entry of entries) {
+    const key = storageKey(entry)
+    if (seen.has(key)) continue
+    seen.add(key)
+    total += entry.size
+  }
+  return total
 }
 
 function revokeUrl(id: string): void {
@@ -278,6 +330,58 @@ function revokeUrl(id: string): void {
     URL.revokeObjectURL(url)
     urlCache.delete(id)
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Duplicate detection                                                        */
+/* -------------------------------------------------------------------------- */
+
+const SAMPLE_BYTES = 64 * 1024
+const COMPARE_CHUNK = 8 * 1024 * 1024
+
+/**
+ * An existing entry with exactly the bytes of `file`, if any.
+ *
+ * Only entries of the same size are candidates; the first and last 64 KB rule
+ * out almost all of them cheaply, and a survivor is compared in full, chunk by
+ * chunk, so a multi-gigabyte video is never held in memory and a match is
+ * exact rather than probable. An entry with the same name is tried first.
+ */
+async function findIdentical(file: Blob & { name: string }): Promise<VfsEntry | undefined> {
+  const candidates = entries
+    .filter((entry) => entry.size === file.size && !writers.has(entry.id))
+    .sort((a, b) => Number(b.name === file.name) - Number(a.name === file.name))
+  if (candidates.length === 0) return undefined
+  const head = await bytesOf(file, 0, SAMPLE_BYTES)
+  const tail = await bytesOf(file, Math.max(0, file.size - SAMPLE_BYTES), file.size)
+  for (const candidate of candidates) {
+    let stored: Blob
+    try {
+      stored = await blob(candidate.id)
+    } catch {
+      continue
+    }
+    if (stored.size !== file.size) continue
+    if (!sameBytes(head, await bytesOf(stored, 0, SAMPLE_BYTES))) continue
+    if (!sameBytes(tail, await bytesOf(stored, Math.max(0, file.size - SAMPLE_BYTES), file.size))) continue
+    let identical = true
+    for (let offset = 0; offset < file.size && identical; offset += COMPARE_CHUNK) {
+      const end = Math.min(file.size, offset + COMPARE_CHUNK)
+      identical = sameBytes(await bytesOf(file, offset, end), await bytesOf(stored, offset, end))
+    }
+    if (identical) return candidate
+  }
+  return undefined
+}
+
+async function bytesOf(source: Blob, start: number, end: number): Promise<Uint8Array> {
+  return new Uint8Array(await source.slice(start, end).arrayBuffer())
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false
+  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false
+  return true
 }
 
 /* -------------------------------------------------------------------------- */

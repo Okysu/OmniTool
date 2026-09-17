@@ -20,6 +20,8 @@ e2e/*.eml
 e2e/*.jpg
 scripts/.probe/
 e2e/*.wav
+e2e/*.ttf
+e2e/*.jp2
 public/llms.txt
 public/llms-full.txt
 .claude/

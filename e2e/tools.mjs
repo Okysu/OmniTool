@@ -2,7 +2,7 @@
  * Exercises the expanded built-in toolkits end to end in a real browser.
  */
 import { chromium } from 'playwright'
-import { writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:4173'
 const DIR = new URL('./', import.meta.url).pathname
@@ -223,6 +223,58 @@ try {
 
   summary = await runTool('omnitool.pdf', 'to-image', [`${DIR}a.pdf`])
   check('PDF → image (pdf.js render)', /已渲染 2 张图片/.test(summary), summary.slice(0, 140))
+
+  // Embedded fonts must be registered with the worker's FontFaceSet, or every glyph
+  // renders as a missing-glyph box. Compare the rendered page with the same text
+  // drawn directly with the same font.
+  if (existsSync(`${DIR}cjk-embedded.pdf`)) {
+    summary = await runTool('omnitool.pdf', 'to-image', [`${DIR}cjk-embedded.pdf`])
+    const score = await page.evaluate(async (fontBytes) => {
+      const images = [...document.querySelectorAll('main img')].filter((img) => img.src.startsWith('blob:'))
+      const bitmap = await createImageBitmap(await (await fetch(images.at(-1).src)).blob())
+      const { width, height } = bitmap
+      const face = new FontFace('omni-ref-cjk', new Uint8Array(fontBytes))
+      await face.load()
+      document.fonts.add(face)
+      const canvas = (draw) => {
+        const g = new OffscreenCanvas(width, height).getContext('2d')
+        g.fillStyle = '#fff'
+        g.fillRect(0, 0, width, height)
+        draw(g)
+        return g.getImageData(0, 0, width, height).data
+      }
+      const scale = width / 400
+      const rendered = canvas((g) => g.drawImage(bitmap, 0, 0))
+      const reference = canvas((g) => {
+        g.fillStyle = '#000'
+        g.font = `${44 * scale}px omni-ref-cjk`
+        g.fillText('动手学深度学习', 20 * scale, (200 - 110) * scale)
+      })
+      const blank = canvas(() => {})
+      const diff = (a, b) => {
+        let total = 0
+        for (let i = 0; i < a.length; i += 4) total += Math.abs(a[i] - b[i])
+        return total
+      }
+      return { rendered: diff(rendered, reference), blank: diff(blank, reference) }
+    }, [...readFileSync(`${DIR}cjk-embedded.ttf`)])
+    check('PDF → image renders embedded CJK fonts, not missing-glyph boxes', score.rendered < score.blank * 0.35, `diff ${score.rendered} vs blank ${score.blank}`)
+  }
+
+  // pdf.js resources the sandbox cannot fetch come from the bundled data pack.
+  summary = await runTool('omnitool.pdf', 'to-text', [`${DIR}cjk-cmap.pdf`])
+  check('PDF → text decodes a non-embedded CJK font through the bundled CMaps', summary.includes('动手学深度学习') && !summary.includes('没有文字层'), summary.slice(-160))
+  if (existsSync(`${DIR}jpx.pdf`)) {
+    summary = await runTool('omnitool.pdf', 'to-image', [`${DIR}jpx.pdf`])
+    const pixel = await page.evaluate(async () => {
+      const images = [...document.querySelectorAll('main img')].filter((img) => img.src.startsWith('blob:'))
+      const bitmap = await createImageBitmap(await (await fetch(images.at(-1).src)).blob())
+      const g = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d')
+      g.drawImage(bitmap, 0, 0)
+      return [...g.getImageData(bitmap.width >> 1, bitmap.height >> 1, 1, 1).data]
+    })
+    check('PDF → image decodes JPEG 2000 images (scans) with the bundled OpenJPEG', pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60, `centre pixel ${pixel.slice(0, 3).join(',')}`)
+  }
 
   summary = await runTool('omnitool.pdf', 'to-text', [`${DIR}a.pdf`])
   check('PDF → text', /已从 1 个 PDF 提取文本/.test(summary), summary.slice(0, 160))
@@ -470,6 +522,19 @@ try {
 
   summary = await runTool('omnitool.media', 'waveform', [`${DIR}tone.m4a`], null, 300000)
   check('waveform image', /已生成 1 张图/.test(summary), summary.slice(-120))
+
+  // Spectrograms: ffmpeg decodes, fft.js transforms; ffmpeg's showspectrumpic took minutes on long audio.
+  const spectrumStart = Date.now()
+  summary = await runTool('omnitool.media', 'waveform', [`${DIR}tone.m4a`], async (p) => {
+    await selectOption(p, 'kind', '声谱图')
+  }, 300000)
+  const spectrumSeconds = (Date.now() - spectrumStart) / 1000
+  const spectrumSize = await page.evaluate(async () => {
+    const img = [...document.querySelectorAll('main img')].filter((i) => i.src.startsWith('blob:')).at(-1)
+    const bitmap = await createImageBitmap(await (await fetch(img.src)).blob())
+    return [bitmap.width, bitmap.height]
+  })
+  check('spectrogram computed in the sandbox with axes', /已生成 1 张图/.test(summary) && spectrumSize[0] > 1600 && spectrumSize[1] > 400 && spectrumSeconds < 60, `${spectrumSize.join('×')} in ${spectrumSeconds.toFixed(1)} s`)
 
   // A video without an audio track: a readable explanation, not FFmpeg's "matches no streams".
   summary = await runTool('omnitool.media', 'waveform', [`${DIR}silent-small.mp4`], async (p) => {

@@ -54,8 +54,9 @@ const PATTERNS: Pattern[] = [
     label: '直接网络调用（将被拦截）',
     detail: '脚本直接调用了 fetch/XMLHttpRequest/WebSocket。沙盒 CSP 会拦截这些调用，插件可能无法正常工作。',
     level: 'medium',
-    // Bare calls only: `host.net.fetch(` is the sanctioned proxy, not a raw call.
-    regex: /(?<![.\w$])(?:fetch|XMLHttpRequest|WebSocket|EventSource|importScripts)\s*\(/g,
+    // Bare calls only: `host.net.fetch(` is the sanctioned proxy, and `async fetch(`
+    // / `function fetch(` define a method (pdf.js data factories must be named so).
+    regex: /(?<!(?:[.\w$]|\basync\s+|\bfunction\s+))(?:fetch|XMLHttpRequest|WebSocket|EventSource|importScripts)\s*\(/g,
   },
   {
     id: 'kv',

@@ -217,9 +217,9 @@ function addFiles(ids: string[]) {
   inputs.value = tool.value?.multiple ? [...inputs.value, ...ids] : ids.slice(-1)
 }
 
-async function removeInput(id: string) {
+/** Deselects only: the workspace file may be in use elsewhere (see DropZone). */
+function removeInput(id: string) {
   inputs.value = inputs.value.filter((x) => x !== id)
-  await vfs.remove(id)
 }
 
 /* ------------------------------------------------------------------- run */
@@ -318,7 +318,8 @@ watch(
     clearTimeout(timer)
     cancelRun()
     clearResult()
-    await dropFiles(inputs.value)
+    // Only what this page generated: files the user dropped or picked belong to the workspace.
+    await dropFiles(sampleIds.value)
     sampleIds.value = await makeSample(lesson.value)
     inputs.value = [...sampleIds.value]
     toolId.value = ''
@@ -337,7 +338,7 @@ onBeforeUnmount(() => {
   clearTimeout(timer)
   cancelRun()
   playground.dispose()
-  void dropFiles([...inputs.value, ...(result.value?.outputs ?? [])])
+  void dropFiles([...sampleIds.value, ...(result.value?.outputs ?? [])])
 })
 
 function go(l: Lesson | undefined) {

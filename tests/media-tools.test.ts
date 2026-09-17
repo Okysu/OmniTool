@@ -328,11 +328,73 @@ describe('audio-split', () => {
 })
 
 describe('waveform', () => {
-  it('draws a waveform or a spectrogram of the first audio stream', async () => {
+  it('draws a waveform with ffmpeg', async () => {
     const wave = await plugin.run('waveform', [tone], { kind: 'waveform', width: 800, height: 200, color: '#ff0000', split: true })
     expect(argAfter(wave.ffmpeg[0].args, '-filter_complex')).toBe('[0:a:0]showwavespic=s=800x200:colors=0xff0000:split_channels=1')
-    const spectrum = await plugin.run('waveform', [tone], { kind: 'spectrum' })
-    expect(argAfter(spectrum.ffmpeg[0].args, '-filter_complex')).toMatch(/^\[0:a:0\]showspectrumpic=s=1600x400/)
+  })
+
+  it('has ffmpeg only decode for a spectrogram, and bounds the PCM of long recordings', async () => {
+    const g = globalThis as Record<string, unknown>
+    const hadCanvas = 'OffscreenCanvas' in g
+    // Node has no canvas; painting is covered end to end.
+    if (!hadCanvas) {
+      g.OffscreenCanvas = class {
+        constructor(public width: number, public height: number) {}
+        getContext() {
+          return new Proxy({ createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }), createLinearGradient: () => ({ addColorStop() {} }) } as Record<string, unknown>, {
+            get: (target, key) => (key in target ? target[key as string] : () => {}),
+            set: () => true,
+          })
+        }
+        async convertToBlob() {
+          return new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])])
+        }
+      }
+    }
+    try {
+      const short = await plugin.run('waveform', [tone], { kind: 'spectrum', rate: '44100' }, { probe: { 'tone.m4a': { durationSeconds: 60 } } })
+      expect(short.ffmpeg).toHaveLength(1)
+      expect(short.ffmpeg[0].args).toEqual(expect.arrayContaining(['-ac', '1', '-ar', '44100', '-f', 's16le']))
+      expect(short.ffmpeg[0].args.join(' ')).not.toContain('showspectrumpic')
+      expect(short.outputs.map((o) => o.name)).toEqual(['tone-spectrum.png'])
+      expect(plugin.lastRemoved()).toContain('spectrum.pcm')
+
+      // Three hours at 44.1 kHz would be ~950 MB of PCM; the rate steps down and the summary says so.
+      const long = await plugin.run('waveform', [tone], { kind: 'spectrum', rate: '44100' }, { probe: { 'tone.m4a': { durationSeconds: 3 * 3600 } } })
+      expect(argAfter(long.ffmpeg[0].args, '-ar')).toBe('16000')
+      expect(long.summary).toContain('频率上限降为 8 kHz')
+    } finally {
+      if (!hadCanvas) delete g.OffscreenCanvas
+    }
+  })
+
+  it('puts a tone in the right row on linear and logarithmic scales', async () => {
+    const { exports: FFT } = await (globalThis as unknown as { loadDependency: (id: string) => Promise<{ exports: unknown }> }).loadDependency('fft')
+    const matrix = (globalThis as unknown as { spectrogramMatrix: (o: object) => Promise<{ db: Float32Array; max: number; fftSize: number }> }).spectrogramMatrix
+    const rate = 16000
+    const samples = new Float32Array(rate * 4).map((_, i) => 0.5 * Math.sin((2 * Math.PI * 1000 * i) / rate))
+    const read = async (offset: number, length: number, out: Float64Array) => {
+      out.fill(0)
+      for (let i = 0; i < length; i++) if (offset + i >= 0 && offset + i < samples.length) out[i] = samples[offset + i]
+    }
+    const width = 40
+    const height = 200
+    const peakRow = (db: Float32Array, x: number) => {
+      let best = 0
+      for (let y = 1; y < height; y++) if (db[y * width + x] > db[best * width + x]) best = y
+      return best
+    }
+    const lin = await matrix({ FFT, read, totalSamples: samples.length, rate, width, height, scale: 'lin' })
+    // 1 kHz of an 8 kHz range: row 175 counting from the top.
+    expect(Math.abs(peakRow(lin.db, 20) - 175)).toBeLessThanOrEqual(1)
+    // A 0.5-amplitude sine is about -6 dBFS.
+    expect(lin.max).toBeGreaterThan(-8)
+    expect(lin.max).toBeLessThan(-4)
+    expect(lin.fftSize).toBe(512)
+
+    const log = await matrix({ FFT, read, totalSamples: samples.length, rate, width, height, scale: 'log' })
+    const t = Math.log(1000 / 20) / Math.log(8000 / 20)
+    expect(Math.abs(peakRow(log.db, 20) - Math.round((1 - t) * height))).toBeLessThanOrEqual(3)
   })
 })
 

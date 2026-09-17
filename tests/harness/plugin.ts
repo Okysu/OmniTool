@@ -141,6 +141,7 @@ const indirectEval = (source: string) => (0, eval)(source)
 /** `raw` entries are plain scripts that set their own global, evaluated as-is like the sandbox does. */
 const DEP_ENTRIES: Record<string, { entry: string; global: string; raw?: boolean; emscripten?: boolean }> = {
   'data-libs': { entry: 'scripts/entries/data-libs.mjs', global: 'DataLibs' },
+  fft: { entry: 'node_modules/fft.js/lib/fft.js', global: 'FFT' },
   magick: { entry: 'node_modules/@imagemagick/magick-wasm/dist/index.js', global: 'MagickWasm' },
   fflate: { entry: 'node_modules/fflate/esm/browser.js', global: 'fflate' },
   'pdf-lib': { entry: 'node_modules/pdf-lib/es/index.js', global: 'PDFLib' },

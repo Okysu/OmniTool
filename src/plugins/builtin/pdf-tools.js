@@ -28,6 +28,8 @@ definePlugin({
     { id: 'pdf-lib', url: '/vendor/pdf-lib.js', global: 'PDFLib' },
     { id: 'pdfjs', url: '/vendor/pdfjs.js', global: 'pdfjsLib' },
     { id: 'pdfjs-worker', url: '/vendor/pdfjs-worker.js', global: 'pdfjsWorker' },
+    // CMaps, standard fonts and JPEG 2000 / JBIG2 decoders for pdf.js; loaded on first need.
+    { id: 'pdfjs-data', url: '/vendor/pdfjs-data/index.js', global: 'PDFJS_DATA', lazy: true, assets: { 'pack.bin': { url: '/vendor/pdfjs-data/pack.bin' } } },
     // Chinese text in stamps and form fields; loaded only when needed.
     { id: 'fontkit', url: '/vendor/fontkit.js', global: 'fontkit', lazy: true },
     { id: 'cjk-font', url: '/vendor/fonts/fonts.js', global: 'OMNITOOL_FONTS', lazy: true, assets: { 'NotoSansSC-Regular.ttf': { url: '/vendor/fonts/NotoSansSC-Regular.ttf' } } },
@@ -1961,8 +1963,59 @@ class WorkerFilterFactory {
   destroy() {}
 }
 
+/**
+ * What pdf.js gets as `ownerDocument`. It registers every font embedded in the
+ * PDF through `ownerDocument.fonts`, defaulting to `globalThis.document` - which
+ * a Worker does not have. Without it pdf.js skipped the Font Loading API, its
+ * CSS fallback threw, and glyphs (remapped to Private Use Area code points that
+ * only the embedded font can draw) came out as missing-glyph boxes: rendered
+ * pages showed boxes for all embedded-font text, CJK most visibly. A Worker has
+ * its own FontFaceSet, and it is the one OffscreenCanvas text in this thread
+ * draws from.
+ */
+function workerOwnerDocument() {
+  return { fonts: self.fonts }
+}
+
+/**
+ * Serves pdf.js the data it would otherwise fetch by URL - CMaps for text in
+ * non-embedded CJK fonts, standard font programs, and the wasm decoders for
+ * JPEG 2000 and JBIG2 images - from the `pdfjs-data` pack (scripts/vendor.mjs).
+ * The sandbox has no network, so without this such text was missing and such
+ * images (common in scanned PDFs) rendered blank. The pack is a lazy
+ * dependency: it loads the first time a document actually needs it.
+ */
+class SandboxPdfDataFactory {
+  async fetch({ kind, filename }) {
+    const dir = { cMapUrl: 'cmaps/', standardFontDataUrl: 'standard_fonts/', wasmUrl: 'wasm/' }[kind]
+    if (!dir) throw new Error(`Not implemented: ${kind}`)
+    const { exports: data, assets } = await loadDependency('pdfjs-data')
+    const entry = data.files[dir + filename]
+    if (!entry) throw new Error(`pdf.js 资源不存在：${dir}${filename}`)
+    return new Uint8Array(assets['pack.bin'], entry[0], entry[1]).slice()
+  }
+}
+
+/** pdf.js only checks these prefixes are set; `SandboxPdfDataFactory` resolves them. */
+function pdfDataOptions() {
+  return {
+    BinaryDataFactory: SandboxPdfDataFactory,
+    cMapUrl: 'pdfjs-data:/cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: 'pdfjs-data:/standard_fonts/',
+    wasmUrl: 'pdfjs-data:/wasm/',
+  }
+}
+
 function workerFactories() {
-  return { useWorkerFetch: false, isEvalSupported: false, CanvasFactory: WorkerCanvasFactory, FilterFactory: WorkerFilterFactory }
+  return {
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    CanvasFactory: WorkerCanvasFactory,
+    FilterFactory: WorkerFilterFactory,
+    ownerDocument: workerOwnerDocument(),
+    ...pdfDataOptions(),
+  }
 }
 
 function requirePdfjs() {

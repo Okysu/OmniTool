@@ -115,6 +115,52 @@ try {
   await page.click('#model-source')
   await page.locator('[data-slot=select-item]', { hasText: 'huggingface.co' }).click()
 
+  /* Workspace: importing the same file twice stores it once; picking from the workspace is filtered by type */
+  const workspaceCount = async () => {
+    await page.goto(`${BASE}/#/files`, { waitUntil: 'commit' })
+    await page.waitForSelector('text=工作区文件', { timeout: 30000 })
+    await page.waitForTimeout(300)
+    return Number(((await page.textContent('main header')).match(/(\d+) 个文件/) ?? [])[1] ?? -1)
+  }
+  const openTool = async (path) => {
+    await page.goto(`${BASE}/#/t/${path}`, { waitUntil: 'commit' })
+    await page.waitForSelector('main input[type=file]', { state: 'attached', timeout: 30000 })
+  }
+  const before = await workspaceCount()
+  await openTool('omnitool.image/convert')
+  await page.setInputFiles('main input[type=file]', DIR + 'sample-small.png')
+  await page.waitForSelector('main li:has-text("sample-small.png")')
+  const afterFirst = await workspaceCount()
+  await openTool('omnitool.image/resize')
+  await page.setInputFiles('main input[type=file]', DIR + 'sample-small.png')
+  await page.waitForSelector('text=已在工作区中，直接复用', { timeout: 10000 })
+  await page.waitForSelector('main li:has-text("sample-small.png")')
+  check('re-importing the same file reuses it', (await workspaceCount()) === afterFirst && afterFirst === before + 1, `${before} → ${afterFirst} → same`)
+
+  // Deselecting keeps the file; the picker offers it again, and only to tools that accept it.
+  await openTool('omnitool.image/resize')
+  await page.setInputFiles('main input[type=file]', DIR + 'sample-small.png')
+  await page.waitForSelector('main li:has-text("sample-small.png")')
+  await page.click('main li:has-text("sample-small.png") button[aria-label="从列表中移除"]')
+  check('removing from a tool only deselects', (await workspaceCount()) === afterFirst)
+  await openTool('omnitool.image/resize')
+  await page.click('main [data-pick-workspace]')
+  await page.waitForSelector('[data-workspace-picker]')
+  const offered = await page.locator('[data-workspace-picker] [data-picker-file]').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-picker-file')))
+  check('workspace picker lists files the tool accepts', offered.includes('sample-small.png') && offered.every((n) => /\.(png|jpe?g|webp|gif|svg|bmp|avif|tiff?|heic)$/i.test(n)), offered.slice(0, 5).join(', '))
+  await page.click('[data-workspace-picker] [data-picker-file="sample-small.png"]')
+  await page.click('[data-picker-confirm]')
+  await page.waitForSelector('main li:has-text("sample-small.png")')
+  await page.click('button:has-text("开始处理")')
+  await waitDone()
+  check('a picked workspace file runs like a dropped one', /已/.test(await page.textContent('[data-task-status]')))
+  await openTool('omnitool.pdf/to-image')
+  const pdfOffer = await page.locator('main [data-pick-workspace]').textContent()
+  await page.click('main [data-pick-workspace]').catch(() => {})
+  const pdfFiles = await page.locator('[data-workspace-picker] [data-picker-file]').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-picker-file')))
+  check('a PDF tool is not offered images', !pdfFiles.some((n) => /\.png$/i.test(n)), `${pdfOffer.trim()} · ${pdfFiles.slice(0, 3).join(', ')}`)
+  await page.keyboard.press('Escape')
+
   check('no page errors', errors.length === 0, errors.slice(0, 2).join(' | '))
 } catch (e) {
   check('ui test completed', false, e.message.split('\n')[0])

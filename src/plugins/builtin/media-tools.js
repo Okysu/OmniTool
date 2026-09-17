@@ -27,6 +27,8 @@ definePlugin({
   deps: [
     // Only for tools that draw text into video (watermarks, burned-in subtitles).
     { id: 'cjk-font', url: '/vendor/fonts/fonts.js', global: 'OMNITOOL_FONTS', lazy: true, assets: { 'NotoSansSC-Regular.ttf': { url: '/vendor/fonts/NotoSansSC-Regular.ttf' } } },
+    // Spectrograms: ffmpeg only decodes, the FFT runs here.
+    { id: 'fft', url: '/vendor/fft.js', global: 'FFT', lazy: true },
   ],
 
   tools: [
@@ -1157,6 +1159,12 @@ definePlugin({
         { key: 'height', type: 'number', label: '高度', default: 400, min: 100, max: 4000, suffix: 'px' },
         { key: 'color', type: 'text', label: '波形颜色', default: '#16a34a', when: { key: 'kind', equals: 'waveform' } },
         { key: 'split', type: 'switch', label: '左右声道分开显示', default: false, when: { key: 'kind', equals: 'waveform' } },
+        { key: 'rate', type: 'select', label: '频率范围', default: '22050', when: { key: 'kind', equals: 'spectrum' }, options: [
+          { value: '16000', label: '0–8 kHz（人声）' }, { value: '22050', label: '0–11 kHz' }, { value: '44100', label: '0–22 kHz（完整音乐细节）' },
+        ] },
+        { key: 'fscale', type: 'select', label: '频率刻度', default: 'lin', when: { key: 'kind', equals: 'spectrum' }, options: [
+          { value: 'lin', label: '线性' }, { value: 'log', label: '对数（低频更细）' },
+        ] },
       ],
 
       async run(ctx) {
@@ -1164,13 +1172,18 @@ definePlugin({
         const outputs = []
         const size = `${Math.round(Number(p.width) || 1600)}x${Math.round(Number(p.height) || 400)}`
         const silent = []
+        const notes = []
         await eachInput(ctx, async (input, index) => {
           // A video without an audio track (screen recordings, many WebM clips) has nothing to draw.
           if (!(await hasAudio(input))) return void silent.push(input.name)
+          if (p.kind === 'spectrum') {
+            const drawn = await drawSpectrogram(ctx, input, p, index)
+            outputs.push(drawn.id)
+            if (drawn.note) notes.push(drawn.note)
+            return
+          }
           const color = /^#?[0-9a-f]{6}$/i.test(String(p.color)) ? `0x${String(p.color).replace('#', '')}` : '0x16a34a'
-          const filter = p.kind === 'spectrum'
-            ? `showspectrumpic=s=${size}:legend=1:color=intensity`
-            : `showwavespic=s=${size}:colors=${color}:split_channels=${p.split ? 1 : 0}`
+          const filter = `showwavespic=s=${size}:colors=${color}:split_channels=${p.split ? 1 : 0}`
           const result = await host.ffmpeg.run({
             args: ['-i', '$in0', '-filter_complex', `[0:a:0]${filter}`, '-frames:v', '1', '-update', '1', '-y', '$out0'],
             inputs: [input.id], outputs: [`${baseName(input.name)}-${p.kind}.png`],
@@ -1179,7 +1192,7 @@ definePlugin({
           outputs.push(result.files[0].id)
         })
         if (outputs.length === 0) throw new Error(noAudioMessage(silent, `绘制${p.kind === 'spectrum' ? '声谱图' : '波形图'}`))
-        return { outputs, summary: `已生成 ${outputs.length} 张图${skippedNote(silent)}` }
+        return { outputs, summary: `已生成 ${outputs.length} 张图${skippedNote(silent)}${notes.length ? `；${notes.join('；')}` : ''}` }
       },
     },
 
@@ -1657,6 +1670,247 @@ async function cjkFont(scratch) {
   const file = await host.fs.writeAll(name, new Uint8Array(assets[name]), 'font/ttf')
   scratch.push(file.id)
   return file
+}
+
+/* ------------------------------- spectrogram ------------------------------ */
+
+/**
+ * Spectrograms are computed here rather than with ffmpeg's showspectrumpic.
+ * That filter transforms the whole recording in wasm - over five minutes for
+ * ten minutes of audio - while the picture only has one column per pixel. So
+ * ffmpeg just decodes to 16-bit mono PCM, and each column averages a few
+ * Hann-windowed FFTs (fft.js) spread across the stretch of audio it covers.
+ */
+const PCM_RATES = [44100, 32000, 22050, 16000, 11025, 8000]
+/** Decoded PCM is written to the workspace; very long recordings get a lower rate to stay within this. */
+const PCM_BYTE_LIMIT = 400 * 1024 * 1024
+
+async function drawSpectrogram(ctx, input, p, index) {
+  const { exports: FFT } = await loadDependency('fft')
+  const width = Math.round(Number(p.width) || 1600)
+  const height = Math.round(Number(p.height) || 400)
+  const wanted = Number(p.rate) || 22050
+  const duration = (await host.ffmpeg.probe(input.id)).durationSeconds || 0
+  const rate = PCM_RATES.find((r) => r <= wanted && (!duration || duration * r * 2 <= PCM_BYTE_LIMIT)) ?? 8000
+  const { files } = await host.ffmpeg.run({
+    args: ['-i', '$in0', '-vn', '-ac', '1', '-ar', String(rate), '-f', 's16le', '-c:a', 'pcm_s16le', '-y', '$out0'],
+    inputs: [input.id], outputs: ['spectrum.pcm'], label: `解码 ${input.name}（${index + 1}/${ctx.inputs.length}）`,
+  })
+  const pcm = files[0]
+  try {
+    const totalSamples = Math.floor(pcm.size / 2)
+    if (totalSamples === 0) throw new Error(`${input.name} 解码后没有音频采样`)
+    const matrix = await spectrogramMatrix({
+      FFT, read: pcmReader(pcm.id, totalSamples), totalSamples, rate, width, height, scale: p.fscale === 'log' ? 'log' : 'lin',
+      onProgress: (f) => ctx.progress((index + f) / ctx.inputs.length, `计算频谱 ${input.name}`),
+    })
+    const png = await paintSpectrogram(matrix, { width, height, rate, duration: totalSamples / rate, scale: p.fscale === 'log' ? 'log' : 'lin' })
+    const out = await host.fs.writeAll(`${baseName(input.name)}-spectrum.png`, png, 'image/png')
+    const note = rate < wanted ? `${input.name} 较长，频率上限降为 ${formatHz(rate / 2)}` : ''
+    return { id: out.id, note }
+  } finally {
+    await host.fs.remove(pcm.id).catch(() => {})
+  }
+}
+
+/**
+ * Reads samples `[offset, offset + length)` of 16-bit PCM into `out` as floats,
+ * zero outside the file. Requests move forward in time, so it keeps one block
+ * (about 4 MB) and reads the next only when a window leaves it - a two-hour
+ * recording never has to fit in memory.
+ */
+function pcmReader(id, totalSamples) {
+  const BLOCK = 1 << 21
+  let start = 0
+  let block = null
+  return async function read(offset, length, out) {
+    out.fill(0)
+    const from = Math.max(0, offset)
+    const to = Math.min(totalSamples, offset + length)
+    if (from >= to) return
+    if (!block || from < start || to > start + block.length) {
+      const count = Math.min(totalSamples - from, Math.max(BLOCK, to - from))
+      // Copy: an Int16Array view needs an even byte offset, which a transferred slice may not have.
+      const bytes = (await host.fs.read(id, from * 2, count * 2)).slice()
+      block = new Int16Array(bytes.buffer, 0, bytes.byteLength >> 1)
+      start = from
+    }
+    for (let i = from; i < to; i++) out[i - offset] = block[i - start] / 32768
+  }
+}
+
+/**
+ * Power spectrum per pixel as dBFS, `[height × width]`, top row = highest
+ * frequency. The FFT size follows the image height (two bins per row or more);
+ * each row takes the strongest bin in its frequency band, so narrow tones are
+ * not lost between rows.
+ */
+async function spectrogramMatrix({ FFT, read, totalSamples, rate, width, height, scale, onProgress = () => {} }) {
+  const size = Math.min(8192, Math.max(512, 2 ** Math.ceil(Math.log2(height * 2))))
+  const bins = size / 2
+  const fft = new FFT(size)
+  const hann = new Float64Array(size)
+  let windowSum = 0
+  for (let i = 0; i < size; i++) windowSum += hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (size - 1))
+  // A full-scale sine then reads 0 dBFS.
+  const reference = (windowSum / 2) ** 2
+  const frame = new Float64Array(size)
+  const spectrum = new Float64Array(size * 2)
+  const power = new Float64Array(bins)
+
+  const nyquist = rate / 2
+  const minFreq = Math.min(20, nyquist / 100)
+  const edge = (t) => (scale === 'log' ? minFreq * (nyquist / minFreq) ** t : t * nyquist)
+  const rowLo = new Int32Array(height)
+  const rowHi = new Int32Array(height)
+  for (let y = 0; y < height; y++) {
+    const low = edge((height - 1 - y) / height)
+    const high = edge((height - y) / height)
+    rowLo[y] = Math.min(bins - 1, Math.floor((low / nyquist) * bins))
+    rowHi[y] = Math.min(bins - 1, Math.max(rowLo[y], Math.ceil((high / nyquist) * bins) - 1))
+  }
+
+  const db = new Float32Array(width * height)
+  let max = -Infinity
+  for (let x = 0; x < width; x++) {
+    const from = (x * totalSamples) / width
+    const span = totalSamples / width
+    const windows = Math.min(6, Math.max(1, Math.ceil(span / size)))
+    power.fill(0)
+    for (let k = 0; k < windows; k++) {
+      const centre = from + (span * (k + 0.5)) / windows
+      await read(Math.round(centre - size / 2), size, frame)
+      for (let i = 0; i < size; i++) frame[i] *= hann[i]
+      fft.realTransform(spectrum, frame)
+      for (let b = 0; b < bins; b++) power[b] += spectrum[2 * b] ** 2 + spectrum[2 * b + 1] ** 2
+    }
+    for (let y = 0; y < height; y++) {
+      let peak = 0
+      for (let b = rowLo[y]; b <= rowHi[y]; b++) if (power[b] > peak) peak = power[b]
+      const value = 10 * Math.log10(peak / windows / reference + 1e-12)
+      db[y * width + x] = value
+      if (value > max) max = value
+    }
+    if ((x & 63) === 0) onProgress(x / width)
+  }
+  onProgress(1)
+  return { db, max, width, height, fftSize: size }
+}
+
+/** Inferno-like colour stops: silence is near-black, the loudest parts pale yellow. */
+const SPECTRUM_STOPS = [[0, 0, 0, 4], [0.25, 87, 16, 110], [0.5, 188, 55, 84], [0.75, 249, 142, 9], [1, 252, 255, 164]]
+const SPECTRUM_RANGE_DB = 90
+
+function spectrumColour(t) {
+  const i = Math.min(SPECTRUM_STOPS.length - 2, Math.floor(t * (SPECTRUM_STOPS.length - 1)))
+  const [t0, r0, g0, b0] = SPECTRUM_STOPS[i]
+  const [t1, r1, g1, b1] = SPECTRUM_STOPS[i + 1]
+  const f = Math.max(0, Math.min(1, (t - t0) / (t1 - t0)))
+  return [r0 + (r1 - r0) * f, g0 + (g1 - g0) * f, b0 + (b1 - b0) * f]
+}
+
+/** The matrix as a PNG with time and frequency axes and a dB colour bar. */
+async function paintSpectrogram({ db, max }, { width, height, rate, duration, scale }) {
+  const left = 64
+  const right = 76
+  const top = 20
+  const bottom = 40
+  const canvas = new OffscreenCanvas(width + left + right, height + top + bottom)
+  const g = canvas.getContext('2d')
+  g.fillStyle = '#0b0b10'
+  g.fillRect(0, 0, canvas.width, canvas.height)
+
+  const ceiling = Math.min(0, Math.ceil(max))
+  const floor = ceiling - SPECTRUM_RANGE_DB
+  const lut = new Uint8ClampedArray(256 * 3)
+  for (let i = 0; i < 256; i++) lut.set(spectrumColour(i / 255), i * 3)
+  const image = g.createImageData(width, height)
+  for (let i = 0; i < db.length; i++) {
+    const level = Math.max(0, Math.min(255, Math.round(((db[i] - floor) / SPECTRUM_RANGE_DB) * 255)))
+    image.data[i * 4] = lut[level * 3]
+    image.data[i * 4 + 1] = lut[level * 3 + 1]
+    image.data[i * 4 + 2] = lut[level * 3 + 2]
+    image.data[i * 4 + 3] = 255
+  }
+  g.putImageData(image, left, top)
+
+  g.font = '12px system-ui, -apple-system, "Segoe UI", sans-serif'
+  g.fillStyle = '#d4d4d8'
+  g.strokeStyle = 'rgba(212, 212, 216, 0.5)'
+  g.lineWidth = 1
+
+  // Time axis.
+  g.textAlign = 'center'
+  g.textBaseline = 'top'
+  const timeStep = niceStep(duration, Math.max(2, Math.floor(width / 110)), [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200])
+  for (let t = 0; t <= duration + 1e-6; t += timeStep) {
+    const x = left + Math.round((t / duration) * width)
+    g.beginPath()
+    g.moveTo(x + 0.5, top + height)
+    g.lineTo(x + 0.5, top + height + 5)
+    g.stroke()
+    g.fillText(formatClock(t, timeStep), x, top + height + 8)
+  }
+
+  // Frequency axis.
+  g.textAlign = 'right'
+  g.textBaseline = 'middle'
+  const nyquist = rate / 2
+  const minFreq = Math.min(20, nyquist / 100)
+  const ticks = scale === 'log'
+    ? [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].filter((f) => f >= minFreq && f <= nyquist)
+    : (() => {
+        const step = niceStep(nyquist, Math.max(2, Math.floor(height / 45)), [100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000])
+        const list = []
+        for (let f = 0; f <= nyquist + 1e-6; f += step) list.push(f)
+        return list
+      })()
+  for (const f of ticks) {
+    const t = scale === 'log' ? Math.log(f / minFreq) / Math.log(nyquist / minFreq) : f / nyquist
+    const y = top + height - Math.round(t * height)
+    g.beginPath()
+    g.moveTo(left - 5, y + 0.5)
+    g.lineTo(left, y + 0.5)
+    g.stroke()
+    g.fillText(formatHz(f), left - 8, Math.min(top + height - 6, Math.max(top + 6, y)))
+  }
+
+  // Colour bar.
+  const barX = left + width + 14
+  const gradient = g.createLinearGradient(0, top + height, 0, top)
+  for (let i = 0; i <= 10; i++) {
+    const [r, gr, b] = spectrumColour(i / 10)
+    gradient.addColorStop(i / 10, `rgb(${r | 0}, ${gr | 0}, ${b | 0})`)
+  }
+  g.fillStyle = gradient
+  g.fillRect(barX, top, 12, height)
+  g.fillStyle = '#d4d4d8'
+  g.textAlign = 'left'
+  for (let i = 0; i <= 3; i++) {
+    const y = top + Math.round((i / 3) * height)
+    g.fillText(`${ceiling - (SPECTRUM_RANGE_DB * i) / 3} dB`, barX + 18, Math.min(top + height - 6, Math.max(top + 6, y)))
+  }
+
+  const blob = await canvas.convertToBlob({ type: 'image/png' })
+  return new Uint8Array(await blob.arrayBuffer())
+}
+
+/** The smallest step from `candidates` that keeps the tick count at or below `maxTicks`. */
+function niceStep(range, maxTicks, candidates) {
+  return candidates.find((step) => range / step <= maxTicks) ?? candidates[candidates.length - 1]
+}
+
+function formatClock(seconds, step) {
+  const whole = Math.floor(seconds + 1e-6)
+  const h = Math.floor(whole / 3600)
+  const m = Math.floor((whole % 3600) / 60)
+  const s = whole % 60
+  const frac = step < 1 ? (seconds - whole).toFixed(1).slice(1) : ''
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}${frac}`
+}
+
+function formatHz(f) {
+  return f >= 1000 ? `${Number((f / 1000).toFixed(1))} kHz` : `${Math.round(f)} Hz`
 }
 
 async function eachInput(ctx, fn) {

@@ -1,13 +1,19 @@
 <script setup lang="ts">
 /**
- * File intake: drag-and-drop, click-to-browse and paste.
+ * File intake: drag-and-drop, click-to-browse, paste, or picking files already
+ * in the workspace.
  *
  * Files are imported into the VFS immediately (streamed to OPFS, not held in the
- * heap) and the caller only ever sees ids.
+ * heap) and the caller only ever sees ids. The VFS recognises content it already
+ * holds, so dropping the same file twice does not store it twice.
+ *
+ * Removing a file from the list only deselects it: the same workspace file may
+ * be selected in another tool or workflow. Deleting is done on the workspace page.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import { Button } from '@/components/ui/button'
+import WorkspacePicker from './WorkspacePicker.vue'
 import * as vfs from '@/core/vfs'
 import { pushToast } from '@/core/ui/toast'
 import { matchesAccept } from '@/core/plugin/params'
@@ -31,6 +37,21 @@ const acceptAttr = computed(() => (props.accept.length ? props.accept.join(',') 
 const pasteChord = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'
 
 const entries = computed(() => props.files.map((id) => vfs.get(id)).filter((e): e is vfs.VfsEntry => Boolean(e)))
+
+const pickerOpen = ref(false)
+/** Workspace files this tool could take that are not selected yet. */
+const available = computed(() => {
+  const keys = new Set<string>()
+  for (const entry of vfs.entries) {
+    if (props.files.includes(entry.id) || vfs.isWriting(entry.id) || !matchesAccept(entry, props.accept)) continue
+    keys.add(`${vfs.storageKey(entry)}|${entry.name}`)
+  }
+  return keys.size
+})
+
+function onPick(ids: string[]) {
+  emit('add', props.multiple ? ids : ids.slice(0, 1))
+}
 const totalSize = computed(() => entries.value.reduce((sum, entry) => sum + entry.size, 0))
 
 async function ingest(list: FileList | File[] | null) {
@@ -42,13 +63,21 @@ async function ingest(list: FileList | File[] | null) {
   try {
     const accepted = props.multiple ? files : files.slice(0, 1)
     const ids: string[] = []
+    let reused = 0
     for (const file of accepted) {
       if (!matchesAccept(file, props.accept)) {
         pushToast({ level: 'warn', message: `已跳过 ${file.name}：与该工具接受的类型不匹配` })
         continue
       }
-      ids.push((await vfs.importFile(file)).id)
+      const known = new Set(vfs.entries.map((entry) => entry.id))
+      let entry = await vfs.importFile(file)
+      if (known.has(entry.id) || entry.storage) reused++
+      // The same file again in one list (joining a clip with itself) is a real
+      // second selection: give it its own entry over the same stored bytes.
+      if (props.files.includes(entry.id) || ids.includes(entry.id)) entry = await vfs.alias(entry.id)
+      ids.push(entry.id)
     }
+    if (reused) pushToast({ level: 'info', message: `${reused} 个文件已在工作区中，直接复用，未重复占用空间` })
     if (ids.length) emit('add', ids)
   } catch (error) {
     pushToast({ level: 'error', title: '导入失败', message: error instanceof Error ? error.message : String(error) })
@@ -113,11 +142,19 @@ onUnmounted(() => window.removeEventListener('paste', onPaste))
         </p>
       </div>
 
-      <Button variant="outline" size="sm" class="pointer-events-auto mt-4" @click="input?.click()">
-        <Icon name="folder-open" :size="14" />
-        选择文件
-      </Button>
+      <div class="pointer-events-auto mt-4 flex flex-wrap justify-center gap-2">
+        <Button variant="outline" size="sm" @click="input?.click()">
+          <Icon name="folder-open" :size="14" />
+          选择文件
+        </Button>
+        <Button variant="ghost" size="sm" :disabled="available === 0" data-pick-workspace :title="available ? '' : '工作区里没有这个工具能处理的其他文件'" @click="pickerOpen = true">
+          <Icon name="layers" :size="14" />
+          从工作区选择<span v-if="available" class="tabular-nums text-muted-foreground">（{{ available }}）</span>
+        </Button>
+      </div>
     </div>
+
+    <WorkspacePicker v-model:open="pickerOpen" :accept="accept" :multiple="multiple" :selected="files" @pick="onPick" />
 
     <!-- Selected files -->
     <ul v-if="entries.length" class="mt-3 space-y-1.5">
@@ -132,7 +169,8 @@ onUnmounted(() => window.removeEventListener('paste', onPaste))
         <button
           type="button"
           class="shrink-0 text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover:opacity-100"
-          aria-label="移除"
+          aria-label="从列表中移除"
+          title="从列表中移除（文件仍保留在工作区）"
           @click="emit('remove', entry.id)"
         >
           <Icon name="x" :size="14" />

@@ -44,12 +44,14 @@ OmniTool 自身代码库遵循 [MIT 许可证](LICENSE) 开源。
 | onnxruntime-web | 本地深度学习网络推理加速引擎 | MIT |
 | @imagemagick/magick-wasm | 专业图像处理底盘（ImageMagick 引擎） | Apache-2.0（ImageMagick 专属授权） |
 | pdfjs-dist（pdf.js） | PDF 高精度渲染与正文提取 | Apache-2.0 |
+| pdf.js 资源包 `pdfjs-data`（随 pdfjs-dist 分发） | Adobe CMap（未嵌入字体的中日韩文字解码）；Foxit 标准字体程序；OpenJPEG 与 JBIG2 图像解码器 wasm（扫描件常用的 JPEG 2000 / JBIG2 图像） | CMap：BSD-3-Clause（Adobe）；Foxit 字体：BSD-3-Clause（PDFium）；OpenJPEG：BSD-2-Clause；JBIG2：BSD-3-Clause（PDFium），pdf.js 封装 Apache-2.0。未包含 Liberation 字体 |
 | pdf-lib、@pdf-lib/fontkit | PDF 页面重排、表单修改与字体子集化 | MIT |
 | @neslinesli93/qpdf-wasm | PDF 线性化、加解密与结构修复（qpdf 衍生） | ISC（上游 qpdf 核心为 Apache-2.0） |
 | libarchive-wasm | 7z、RAR 多协议高压缩比归档解析 | MIT（上游 libarchive 核心为 BSD-2-Clause） |
 | zxing-wasm | 一维条形码 / 二维码多协议矩阵编解码 | MIT（上游 zxing-cpp 核心为 Apache-2.0） |
 | xlsx（SheetJS 社区版） | 纯前端电子表格解析与构建 | Apache-2.0 |
 | fflate | 极致轻量的高性能 ZIP / GZIP 压缩流 | MIT |
+| fft.js | 声谱图的快速傅里叶变换 | MIT |
 | yaml | YAML 标准格式序列化与解析 | ISC |
 | papaparse | 工业级 CSV 大文本流式解析 | MIT |
 | fast-xml-parser | 纯 JS 实现的轻量 XML 处理器 | MIT |

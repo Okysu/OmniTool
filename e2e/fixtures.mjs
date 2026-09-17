@@ -1,6 +1,6 @@
 import { deflateSync } from 'node:zlib'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { PDFDocument, StandardFonts, degrees } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFString, StandardFonts, concatTransformationMatrix, degrees, drawObject, popGraphicsState, pushGraphicsState } from 'pdf-lib'
 
 /** Builds a real PNG so the image plugin has something meaningful to re-encode. */
 function makePng(width, height, path, pixel = (x, y) => [(x * 255) / width, (y * 255) / height, (x ^ y) & 0xff]) {
@@ -150,6 +150,59 @@ await makePdf(dir + 'b.pdf', 3, 'Document B')
   for (let i = 0; i < 3; i++) sideways.drawText(`This line was scanned sideways ${i + 1}`, { x: 60 + i * 20, y: 40, size: 12, font, rotate: degrees(90) })
   writeFileSync(dir + 'sideways.pdf', await doc.save())
 }
+// Text in an embedded CJK font. pdf.js draws such glyphs only through the
+// embedded font (remapped to Private Use Area code points), so a renderer that
+// fails to register fonts shows boxes. The font is subset here with
+// fonteditor-core: pdf-lib's own subsetting drops glyphs of this font.
+{
+  const fontPath = new URL('../public/vendor/fonts/NotoSansSC-Regular.ttf', import.meta.url).pathname
+  try {
+    const { default: fontEditor } = await import('fonteditor-core')
+    const { default: fontkit } = await import('@pdf-lib/fontkit')
+    const text = '动手学深度学习'
+    const subset = fontEditor.Font.create(readFileSync(fontPath), { type: 'ttf', subset: [...new Set([...text].map((c) => c.codePointAt(0)))], hinting: false })
+    const bytes = subset.write({ type: 'ttf', toBuffer: true })
+    writeFileSync(dir + 'cjk-embedded.ttf', bytes)
+    const doc = await PDFDocument.create()
+    doc.registerFontkit(fontkit)
+    const font = await doc.embedFont(bytes, { subset: false })
+    doc.addPage([400, 200]).drawText(text, { x: 20, y: 110, size: 44, font })
+    writeFileSync(dir + 'cjk-embedded.pdf', await doc.save())
+  } catch (error) {
+    console.log('skipping cjk-embedded.pdf:', error.message)
+  }
+}
+
+// Chinese text in a *non-embedded* font (STSong-Light, UniGB-UCS2-H encoding),
+// as older Chinese PDFs have: pdf.js can only decode it with the bundled CMaps.
+{
+  const doc = await PDFDocument.create()
+  const page = doc.addPage([400, 200])
+  const ctx = doc.context
+  const descriptor = ctx.register(ctx.obj({ Type: 'FontDescriptor', FontName: 'STSong-Light', Flags: 6, FontBBox: [0, -200, 1000, 900], ItalicAngle: 0, Ascent: 880, Descent: -120, CapHeight: 880, StemV: 80 }))
+  const cidFont = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'CIDFontType0', BaseFont: 'STSong-Light', CIDSystemInfo: { Registry: PDFString.of('Adobe'), Ordering: PDFString.of('GB1'), Supplement: 4 }, FontDescriptor: descriptor }))
+  const font = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'Type0', BaseFont: 'STSong-Light-UniGB-UCS2-H', Encoding: 'UniGB-UCS2-H', DescendantFonts: [cidFont] }))
+  page.node.setFontDictionary(PDFName.of('F1'), font)
+  const hex = [...'动手学深度学习'].map((c) => c.codePointAt(0).toString(16).padStart(4, '0')).join('')
+  page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(`BT /F1 40 Tf 20 100 Td <${hex}> Tj ET`)))
+  writeFileSync(dir + 'cjk-cmap.pdf', await doc.save())
+}
+
+// A page whose only content is a JPEG 2000 image (solid red), like many scans.
+// pdf.js decodes JPX only with its OpenJPEG wasm from the bundled data pack.
+try {
+  const { execFileSync: run } = await import('node:child_process')
+  run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=64x64', '-frames:v', '1', '-c:v', 'jpeg2000', '-pix_fmt', 'rgb24', dir + 'red.jp2'])
+  const doc = await PDFDocument.create()
+  const page = doc.addPage([200, 200])
+  const image = doc.context.register(doc.context.stream(readFileSync(dir + 'red.jp2'), { Type: 'XObject', Subtype: 'Image', Width: 64, Height: 64, Filter: 'JPXDecode' }))
+  const name = page.node.newXObject('Im', image)
+  page.pushOperators(pushGraphicsState(), concatTransformationMatrix(200, 0, 0, 200, 0, 0), drawObject(name), popGraphicsState())
+  writeFileSync(dir + 'jpx.pdf', await doc.save())
+} catch (error) {
+  console.log('skipping jpx.pdf (needs ffmpeg with the jpeg2000 encoder):', error.message)
+}
+
 // A short test video with an audio track, for the media suites. Uses the system
 // ffmpeg because the browser-side one is the thing under test.
 import { execFileSync } from 'node:child_process'

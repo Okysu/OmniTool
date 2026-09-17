@@ -144,9 +144,9 @@ function addFiles(ids: string[]) {
   selected.value = entry.value?.tool.multiple ? [...selected.value, ...ids] : ids.slice(-1)
 }
 
-async function removeInput(id: string) {
+/** Deselects only: the workspace file may be in use elsewhere (see DropZone). */
+function removeInput(id: string) {
   selected.value = selected.value.filter((fileId) => fileId !== id)
-  await vfs.remove(id)
 }
 
 async function removeOutput(id: string) {

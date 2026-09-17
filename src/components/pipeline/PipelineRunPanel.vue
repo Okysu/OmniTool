@@ -59,9 +59,9 @@ async function start() {
   session.value.runId = startPipeline(props.pipeline, inputs).id
 }
 
-async function removeInput(id: string) {
+/** Deselects only: the workspace file may be in use elsewhere (see DropZone). */
+function removeInput(id: string) {
   session.value.inputs = session.value.inputs.filter((fileId) => fileId !== id)
-  await vfs.remove(id)
 }
 
 const STATE_ICON = { pending: 'circle', running: 'loader', done: 'circle-check', failed: 'circle-alert', cancelled: 'ban' } as const

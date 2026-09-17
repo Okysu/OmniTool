@@ -15,7 +15,7 @@
  *    CDN) is what keeps the app working offline and stops a third party from
  *    learning which tools the user runs.
  */
-import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -42,6 +42,8 @@ const BUNDLE = [
    */
   { entry: '@imagemagick/magick-wasm', global: 'MagickWasm', out: 'magick/magick.js' },
   { entry: 'fflate', global: 'fflate', out: 'fflate.js' },
+  // A fast radix-2 FFT for spectrograms; far quicker than ffmpeg's showspectrumpic in wasm.
+  { entry: 'fft.js', global: 'FFT', out: 'fft.js' },
   // Barcode reading and writing (QR, Code128, EAN, DataMatrix, PDF417, …); lazy, wasm as an asset.
   { entry: 'zxing-wasm/full', global: 'ZXingWASM', out: 'zxing/zxing.js' },
   // Documents: email (EML, MSG) and fonts (TTF / OTF / WOFF / WOFF2 conversion and subsetting).
@@ -281,6 +283,46 @@ async function pinnedDownload({ url, sha256, ext, label }) {
   await mkdir(dirname(dest), { recursive: true })
   await writeFile(dest, `globalThis.WHISPER_VOCAB=${JSON.stringify(table)};\n`)
   console.log(`[vendor] wrote whisper/vocab.js${cached ? '' : ' (unavailable)'}`)
+}
+
+/**
+ * pdf.js resources, as one pack for a lazy sandbox dependency.
+ *
+ * pdf.js loads three kinds of data by URL: CMaps (text in non-embedded CJK
+ * fonts), standard font programs (Foxit), and wasm image decoders (JPEG 2000
+ * via OpenJPEG, JBIG2 - both common in scanned PDFs). Its no-wasm fallback is
+ * a dynamic `import()`. Inside the sandbox none of that can load, so such text
+ * went missing and such images rendered blank. Plugins now hand pdf.js a data
+ * factory that reads from this pack (see `SandboxPdfDataFactory`).
+ *
+ * `index.js` maps `dir/name` to `[offset, length]` in `pack.bin`. The Liberation
+ * fonts are left out: their licence is not a permissive one, and without them
+ * pdf.js falls back to system fonts exactly as it did before.
+ */
+{
+  const base = resolve(root, 'node_modules/pdfjs-dist')
+  const groups = [
+    ['cmaps', (name) => name.endsWith('.bcmap')],
+    ['standard_fonts', (name) => name.startsWith('Foxit') && name.endsWith('.pfb')],
+    ['wasm', (name) => name === 'openjpeg.wasm' || name === 'jbig2.wasm'],
+  ]
+  const files = {}
+  const chunks = []
+  let offset = 0
+  for (const [dir, keep] of groups) {
+    for (const name of (await readdir(join(base, dir))).filter(keep).sort()) {
+      const bytes = await readFile(join(base, dir, name))
+      files[`${dir}/${name}`] = [offset, bytes.length]
+      chunks.push(bytes)
+      offset += bytes.length
+    }
+  }
+  if (!files['wasm/openjpeg.wasm'] || !files['cmaps/UniGB-UCS2-H.bcmap']) throw new Error('[vendor] pdfjs-dist resources not found')
+  const dir = join(vendor, 'pdfjs-data')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'pack.bin'), Buffer.concat(chunks))
+  await writeFile(join(dir, 'index.js'), `globalThis.PDFJS_DATA=${JSON.stringify({ files })};\n`)
+  console.log(`[vendor] wrote pdfjs-data (${Object.keys(files).length} files, ${(offset / 1024 / 1024).toFixed(1)} MB)`)
 }
 
 // A manifest so the host can assert at runtime that `pnpm vendor` actually ran,
