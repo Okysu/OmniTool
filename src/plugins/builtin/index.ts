@@ -15,6 +15,7 @@ import mediaTools from './media-tools.js?raw'
 import dataTools from './data-tools.js?raw'
 import archiveTools from './archive-tools.js?raw'
 import aiTools from './ai-tools.js?raw'
+import devTools from './dev-tools.js?raw'
 
 export interface BuiltinPlugin {
   /** Must match the `id` the source passes to `definePlugin`. */
@@ -28,5 +29,6 @@ export const BUILTIN_PLUGINS: BuiltinPlugin[] = [
   { id: 'omnitool.media', code: mediaTools },
   { id: 'omnitool.data', code: dataTools },
   { id: 'omnitool.archive', code: archiveTools },
+  { id: 'omnitool.dev', code: devTools },
   { id: 'omnitool.ai', code: aiTools },
 ]

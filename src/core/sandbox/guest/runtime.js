@@ -361,7 +361,7 @@ self.__OMNI_GUEST__ = function (send) {
   // Must match CAPABILITIES / ToolCategory in src/core/types.ts (tests/runtime-manifest.test.ts checks).
   var API_VERSION = 2
   var VALID_CAPABILITIES = ['fs', 'ui', 'net', 'kv', 'secret', 'image', 'ffmpeg', 'onnx']
-  var VALID_CATEGORIES = ['pdf', 'media', 'image', 'document', 'ai', 'archive', 'other']
+  var VALID_CATEGORIES = ['pdf', 'media', 'image', 'document', 'dev', 'ai', 'archive', 'other']
   var ID_RE = /^[a-z0-9][a-z0-9._-]{1,63}$/i
 
   function assert(condition, message) {

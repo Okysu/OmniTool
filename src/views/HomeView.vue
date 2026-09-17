@@ -11,7 +11,7 @@ import { entries as vfsEntries, usedBytes, vfsState } from '@/core/vfs'
 import { CATEGORY_LABEL, type ToolCategory } from '@/core/types'
 import { formatBytes } from '@/lib/format'
 
-const ORDER: ToolCategory[] = ['pdf', 'media', 'image', 'document', 'ai', 'archive', 'other']
+const ORDER: ToolCategory[] = ['pdf', 'media', 'image', 'document', 'dev', 'ai', 'archive', 'other']
 
 const grouped = computed(() => {
   const map = new Map<ToolCategory, ToolEntry[]>()

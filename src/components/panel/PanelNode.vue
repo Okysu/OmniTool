@@ -24,9 +24,19 @@ import PanelCanvas from './PanelCanvas.vue'
 import PanelMedia from './PanelMedia.vue'
 import PanelReorder from './PanelReorder.vue'
 import InlinePreview from './InlinePreview.vue'
+import { pushToast } from '@/core/ui/toast'
 import type { UiNode, UiState, UiValue } from '@/core/ui/schema'
 
-const props = defineProps<{ node: UiNode; state: UiState }>()
+const props = defineProps<{ node: UiNode; state: UiState; inRow?: boolean }>()
+
+/**
+ * Inside a `row`, controls that hold text or a value range share the width.
+ * Otherwise an input shrinks to its intrinsic size next to a button, and a
+ * textarea and its output cannot sit side by side. The minimum makes a wrapping
+ * row stack them on narrow screens.
+ */
+const GROWS = new Set(['input', 'textarea', 'select', 'slider', 'code'])
+const growClass = computed(() => (props.inRow && GROWS.has(props.node.type) ? 'min-w-[12rem] flex-1' : ''))
 
 const emit = defineEmits<{
   change: [key: string, value: UiValue]
@@ -74,6 +84,15 @@ const ALERT_ICON: Record<string, string> = {
   destructive: 'circle-alert',
 }
 
+async function copyCode(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    pushToast({ level: 'success', message: '已复制到剪贴板' })
+  } catch {
+    pushToast({ level: 'error', message: '无法写入剪贴板，请手动选择文本复制' })
+  }
+}
+
 /** Gap in Tailwind's 0.25rem scale, clamped to something sane. */
 function gapStyle(gap: number | undefined) {
   return { gap: `${Math.max(0, Math.min(12, gap ?? 3)) * 0.25}rem` }
@@ -98,8 +117,8 @@ function gapStyle(gap: number | undefined) {
 
     <div
       v-else-if="node.type === 'row'"
-      class="flex items-center"
-      :class="[ALIGN[node.align ?? 'start'], node.wrap ? 'flex-wrap' : '']"
+      class="flex"
+      :class="[ALIGN[node.align ?? 'start'], node.wrap ? 'flex-wrap' : '', node.children.some((c) => c.type === 'textarea' || c.type === 'code') ? 'items-start' : 'items-center']"
       :style="gapStyle(node.gap)"
     >
       <PanelNode
@@ -107,6 +126,7 @@ function gapStyle(gap: number | undefined) {
         :key="index"
         :node="child"
         :state="state"
+        in-row
         @change="(k, v) => emit('change', k, v)"
         @action="(n) => emit('action', n)"
         @pointer="(id, e) => emit('pointer', id, e)"
@@ -157,6 +177,21 @@ function gapStyle(gap: number | undefined) {
       </template>
     </dl>
 
+    <div v-else-if="node.type === 'code'" class="self-stretch overflow-hidden rounded-lg border border-border bg-muted/40" :class="growClass" data-panel-code>
+      <div class="flex items-center gap-2 border-b border-border px-3 py-1">
+        <span class="min-w-0 flex-1 truncate text-[11px] font-medium text-muted-foreground">{{ node.label }}</span>
+        <Button variant="ghost" size="xs" class="h-6" :disabled="!node.text" @click="copyCode(node.text)">
+          <Icon name="copy" :size="12" />
+          复制
+        </Button>
+      </div>
+      <pre
+        class="overflow-auto scroll-slim p-3 font-mono text-[11px] leading-relaxed"
+        :class="node.wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'"
+        :style="{ maxHeight: `${Math.max(4, Math.min(60, node.height ?? 20))}rem` }"
+      >{{ node.text }}</pre>
+    </div>
+
     <!-- ---------------------------- controls ----------------------------- -->
     <div
       v-else-if="
@@ -169,6 +204,7 @@ function gapStyle(gap: number | undefined) {
         node.type === 'color'
       "
       class="space-y-1.5"
+      :class="growClass"
     >
       <div v-if="node.label" class="flex items-baseline gap-2">
         <Label :for="`panel-${node.bind}`" class="text-xs">{{ node.label }}</Label>

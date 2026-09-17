@@ -64,7 +64,7 @@ Image processing belongs in the sandbox with `OffscreenCanvas`: it runs off the 
 | --- | --- | --- | --- |
 | `id` | string | yes | Unique within the plugin, at least 2 characters |
 | `name` | string | yes | Display name |
-| `category` | string | yes | `pdf`, `media`, `image`, `document`, `ai`, `archive`, `other` |
+| `category` | string | yes | `pdf`, `media`, `image`, `document`, `dev`, `ai`, `archive`, `other` |
 | `description`, `icon`, `keywords` | | | Shown on cards and used by search |
 | `accept` | string[] | | File filter: extensions (`.pdf`), wildcards (`image/*`) or exact MIME types |
 | `multiple` | boolean | | Accept several files. Default `false`. |
@@ -175,6 +175,7 @@ Every node supports `when: { key, equals }`. Unknown node types are ignored.
 | `badge` | `text`, `tone` | Badge |
 | `alert` | `text`, `title`, `tone: info \| success \| warning \| destructive` | Callout |
 | `facts` | `rows: [{ label, value }]` | Key/value list, good for probe results |
+| `code` | `text, label?, height?, wrap?` | Monospaced, scrollable output with a host-drawn Copy button (plugins cannot reach the clipboard). Up to 200 000 characters; `height` in rem, default 20 |
 | `input` | `bind`, `label`, `hint`, `placeholder`, `inputType: text \| number`, `min`, `max`, `step`, `suffix` | Input |
 | `textarea` | `bind`, `label`, `hint`, `rows`, `mono` | Multi-line text |
 | `select` | `bind`, `label`, `options` | Dropdown |

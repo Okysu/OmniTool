@@ -44,6 +44,11 @@ describe('sanitizePanel', () => {
     expect((panel.nodes[0] as { text: string }).text.length).toBe(2000)
   })
 
+  it('gives code output a larger text bound than other nodes', () => {
+    const panel = sanitizePanel({ nodes: [{ type: 'code', text: 'x'.repeat(300_000), label: 'out', height: 12, wrap: true, onclick: 'x' }] })
+    expect(panel.nodes[0]).toEqual({ type: 'code', text: 'x'.repeat(200_000), label: 'out', height: 12, wrap: true })
+  })
+
   it('finds canvas ids at any depth', () => {
     const panel = sanitizePanel({
       nodes: [{ type: 'row', children: [{ type: 'stack', children: [{ type: 'canvas', id: 'stage' }] }] }, { type: 'canvas', id: 'mini' }],

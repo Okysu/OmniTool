@@ -161,6 +161,38 @@ try {
   check('a PDF tool is not offered images', !pdfFiles.some((n) => /\.png$/i.test(n)), `${pdfOffer.trim()} · ${pdfFiles.slice(0, 3).join(', ')}`)
   await page.keyboard.press('Escape')
 
+  /* Developer tools: live panels keep focus while typing, copy reaches the clipboard, form tools take pasted text */
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.goto(`${BASE}/#/t/omnitool.dev/timestamp`, { waitUntil: 'commit' })
+  await page.waitForSelector('main [data-panel-code]', { timeout: 30000 })
+  check('developer tools have their own sidebar category', (await page.locator('nav button:has-text("开发者工具")').count()) === 1)
+  await page.click('#panel-value')
+  await page.keyboard.type('1700000000', { delay: 40 })
+  await page.waitForFunction(() => document.querySelector('main [data-panel-code] pre')?.textContent?.includes('2023-11-14T22:13:20.000Z'), null, { timeout: 10000 })
+  check('timestamp panel updates live without losing typed characters', (await page.inputValue('#panel-value')) === '1700000000' && (await page.evaluate(() => document.activeElement?.id)) === 'panel-value')
+  await page.click('main [data-panel-code] button:has-text("复制")')
+  await page.waitForTimeout(300)
+  const clipboard = await page.evaluate(() => navigator.clipboard.readText())
+  check('code block copy button writes the clipboard', clipboard.includes('Unix 毫秒: 1700000000000'), clipboard.split('\n')[1] ?? '')
+
+  await page.goto(`${BASE}/#/t/omnitool.dev/jwt`, { waitUntil: 'commit' })
+  await page.waitForSelector('#panel-token', { timeout: 30000 })
+  await page.fill('#panel-token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c')
+  await page.waitForSelector('#panel-secret', { timeout: 10000 })
+  await page.fill('#panel-secret', 'your-256-bit-secret')
+  await page.waitForSelector('main :text("HS256 签名有效")', { timeout: 10000 })
+  const payload = await page.locator('main [data-panel-code]:has-text("载荷") pre').textContent()
+  check('JWT panel decodes and verifies the jwt.io example', payload.includes('"name": "John Doe"'))
+
+  await page.goto(`${BASE}/#/t/omnitool.dev/hash`, { waitUntil: 'commit' })
+  await page.waitForSelector('text=直接输入', { timeout: 30000 })
+  await page.click('button[role=tab]:has-text("直接输入")')
+  await page.fill('textarea[placeholder="在这里粘贴或输入内容…"]', 'hello')
+  await page.click('button:has-text("开始处理")')
+  await waitDone()
+  const hashOut = await page.textContent('pre')
+  check('hash tool takes pasted text', hashOut.includes('2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  input.txt'), hashOut.trim().slice(0, 90))
+
   check('no page errors', errors.length === 0, errors.slice(0, 2).join(' | '))
 } catch (e) {
   check('ui test completed', false, e.message.split('\n')[0])

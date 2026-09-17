@@ -59,7 +59,7 @@ declare namespace OmniPlugin {
    */
   type Capability = 'fs' | 'ui' | 'net' | 'kv' | 'secret' | 'image' | 'ffmpeg' | 'onnx'
 
-  type Category = 'pdf' | 'media' | 'image' | 'document' | 'ai' | 'archive' | 'other'
+  type Category = 'pdf' | 'media' | 'image' | 'document' | 'dev' | 'ai' | 'archive' | 'other'
 
   interface PluginDefinition {
     /** Globally unique. Reverse-DNS recommended, e.g. `com.you.tools`. `/^[a-z0-9][a-z0-9._-]{1,63}$/i` */
@@ -279,6 +279,8 @@ declare namespace OmniPlugin {
     | (NodeBase & { type: 'badge'; text: string; tone?: 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'destructive' })
     | (NodeBase & { type: 'alert'; text: string; title?: string; tone?: Tone })
     | (NodeBase & { type: 'facts'; rows: Array<{ label: string; value: string }> })
+    /** Monospaced, scrollable output with a host-drawn copy button. Up to 200 000 characters. `height` in rem (default 20). */
+    | (NodeBase & { type: 'code'; text: string; label?: string; height?: number; wrap?: boolean })
     | (NodeBase & { type: 'input'; bind: string; label?: string; hint?: string; placeholder?: string; inputType?: 'text' | 'number'; min?: number; max?: number; step?: number; suffix?: string })
     | (NodeBase & { type: 'textarea'; bind: string; label?: string; hint?: string; placeholder?: string; rows?: number; mono?: boolean })
     | (NodeBase & { type: 'select'; bind: string; label?: string; hint?: string; options: Array<{ value: string; label: string }> })

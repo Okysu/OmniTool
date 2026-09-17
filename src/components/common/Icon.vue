@@ -9,7 +9,7 @@
  */
 import { computed } from 'vue'
 import {
-  AlertTriangle, Aperture, Archive, Circle, ArrowDown, ArrowDownUp, ArrowUp, Ban, Barcode, Blend, Brush, Check, ChevronDown,
+  AlertTriangle, Aperture, Archive, Binary, Braces, CalendarClock, CaseSensitive, Circle, Clock, Code, Diff, Fingerprint, Link, Palette, Regex, Shield, ArrowDown, ArrowDownUp, ArrowUp, Ban, Barcode, Blend, Brush, Check, ChevronDown,
   ChevronRight, CircleAlert, CircleCheck, Combine, Copy, Cpu, Crop, Droplet, Download, Eraser,
   ExternalLink, Eye, FileArchive, FileCode, FileJson, FileText, FileType, Film, Filter, FlipHorizontal, FlipVertical,
   FolderOpen, Gauge, GraduationCap, Grid3x3, GripVertical, HardDrive, Hash, Image, ImageDown, ImagePlus, Info, KeyRound,
@@ -27,7 +27,8 @@ const props = withDefaults(defineProps<{ name?: string; size?: number; strokeWid
 })
 
 const REGISTRY: Record<string, unknown> = {
-  'alert-triangle': AlertTriangle, aperture: Aperture, archive: Archive, 'arrow-down': ArrowDown, 'arrow-down-up': ArrowDownUp, 'arrow-up': ArrowUp,
+  'alert-triangle': AlertTriangle, aperture: Aperture, archive: Archive, binary: Binary, braces: Braces, 'calendar-clock': CalendarClock,
+  'case-sensitive': CaseSensitive, clock: Clock, code: Code, diff: Diff, fingerprint: Fingerprint, link: Link, palette: Palette, regex: Regex, shield: Shield, 'arrow-down': ArrowDown, 'arrow-down-up': ArrowDownUp, 'arrow-up': ArrowUp,
   ban: Ban, barcode: Barcode, blend: Blend, brush: Brush, check: Check, 'chevron-down': ChevronDown,
   'chevron-right': ChevronRight, 'circle-alert': CircleAlert, 'circle-check': CircleCheck,
   combine: Combine, copy: Copy, cpu: Cpu, crop: Crop, droplet: Droplet, download: Download,

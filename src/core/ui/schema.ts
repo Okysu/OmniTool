@@ -104,6 +104,8 @@ export type UiNode =
   | (NodeBase & { type: 'canvas'; id: string; aspect?: number; height?: number; interactive?: boolean })
   /** Key/value readout, for probe results and summaries. */
   | (NodeBase & { type: 'facts'; rows: Array<{ label: string; value: string }> })
+  /** Monospaced, scrollable text with a copy button drawn by the host (plugins cannot reach the clipboard). */
+  | (NodeBase & { type: 'code'; text: string; label?: string; height?: number; wrap?: boolean })
 
 export interface UiPanel {
   /** Rendered above the run button in the tool's parameter column. */
@@ -123,8 +125,10 @@ export interface UiPanel {
 const LAYOUT = new Set(['stack', 'row', 'section'])
 const LEAF = new Set([
   'separator', 'text', 'badge', 'alert', 'input', 'textarea', 'select', 'segmented',
-  'slider', 'switch', 'color', 'button', 'preview', 'timeline', 'media', 'reorder', 'canvas', 'facts',
+  'slider', 'switch', 'color', 'button', 'preview', 'timeline', 'media', 'reorder', 'canvas', 'facts', 'code',
 ])
+/** `code` holds generated output (decoded tokens, diffs, type definitions), so it gets a larger bound. */
+const MAX_CODE_TEXT = 200_000
 
 /** Depth cap: a cyclic or absurdly nested tree must not be able to hang render. */
 const MAX_DEPTH = 12
@@ -167,6 +171,7 @@ export function sanitizePanel(raw: unknown): UiPanel {
     for (const key of ['wrap', 'mono', 'disabled', 'busy', 'interactive']) {
       if (typeof source[key] === 'boolean') out[key] = source[key]
     }
+    if (type === 'code') out.text = typeof source.text === 'string' ? source.text.slice(0, MAX_CODE_TEXT) : ''
 
     if (Array.isArray(source.options)) {
       out.options = source.options.slice(0, 200).map((option) => {

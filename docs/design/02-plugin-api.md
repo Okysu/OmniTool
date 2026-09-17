@@ -77,7 +77,7 @@ definePlugin({
 | --- | --- | --- | --- |
 | `id` | string | ✓ | 插件内唯一 |
 | `name` | string | ✓ | 显示名 |
-| `category` | string | ✓ | `pdf` `media` `image` `document` `ai` `archive` `other` |
+| `category` | string | ✓ | `pdf` `media` `image` `document` `dev` `ai` `archive` `other` |
 | `description` / `icon` / `keywords` | | | 卡片、工具页、命令面板检索 |
 | `accept` | string[] | | 文件选择器过滤，如 `['image/*', '.heic']` |
 | `multiple` | boolean | | 是否接受多文件，默认 `false` |
@@ -197,6 +197,7 @@ async run(ctx) {
 | `badge` | `text` `tone` | 徽标 |
 | `alert` | `text` `title` `tone: info/success/warning/destructive` | 提示框 |
 | `facts` | `rows: [{label, value}]` | 键值列表，适合展示探测结果 |
+| `code` | `text, label?, height?, wrap?` | 等宽、可滚动的输出，带宿主绘制的「复制」按钮（插件无法访问剪贴板）；最长 200 000 字符，`height` 以 rem 计，默认 20 |
 | `input` | `bind` `label` `hint` `placeholder` `inputType` `min` `max` `step` `suffix` | 输入框 |
 | `textarea` | `bind` `label` `hint` `rows` `mono` | 多行文本 |
 | `select` | `bind` `label` `options` | 下拉 |

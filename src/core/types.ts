@@ -112,13 +112,14 @@ export type ParamValues = Record<string, string | number | boolean | number[]>
 /* Manifest                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export type ToolCategory = 'pdf' | 'media' | 'image' | 'document' | 'ai' | 'archive' | 'other'
+export type ToolCategory = 'pdf' | 'media' | 'image' | 'document' | 'dev' | 'ai' | 'archive' | 'other'
 
 export const CATEGORY_LABEL: Record<ToolCategory, string> = {
   pdf: 'PDF 工具箱',
   media: '音视频工具箱',
   image: '图片工具箱',
   document: 'Office 与文本',
+  dev: '开发者工具',
   ai: 'AI 增强',
   archive: '压缩与归档',
   other: '其他工具',

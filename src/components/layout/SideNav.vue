@@ -37,12 +37,13 @@ const CATEGORY_ICON: Record<ToolCategory, string> = {
   media: 'video',
   image: 'image',
   document: 'file-json',
+  dev: 'terminal',
   ai: 'sparkles',
   archive: 'file-archive',
   other: 'package',
 }
 
-const ORDER: ToolCategory[] = ['pdf', 'media', 'image', 'document', 'ai', 'archive', 'other']
+const ORDER: ToolCategory[] = ['pdf', 'media', 'image', 'document', 'dev', 'ai', 'archive', 'other']
 
 const grouped = computed(() => {
   const map = new Map<ToolCategory, ToolEntry[]>()

@@ -39,7 +39,7 @@ interface Command {
   run: () => void
 }
 
-const CATEGORY_ORDER: ToolCategory[] = ['pdf', 'media', 'image', 'document', 'ai', 'archive', 'other']
+const CATEGORY_ORDER: ToolCategory[] = ['pdf', 'media', 'image', 'document', 'dev', 'ai', 'archive', 'other']
 
 function toolCommand(entry: ToolEntry): Command {
   return {
