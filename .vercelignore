@@ -1,0 +1,22 @@
+# Rebuilt on Vercel from package.json (see vercel.json); never upload local artefacts.
+dist
+public/vendor
+public/llms.txt
+public/llms-full.txt
+.vitest
+scripts/.probe
+e2e/*.png
+e2e/*.pdf
+e2e/*.mp4
+e2e/*.m4a
+e2e/*.gif
+e2e/*.tiff
+e2e/*.zip
+e2e/*.jpg
+e2e/*.wav
+e2e/*.srt
+e2e/*.svg
+e2e/*.eml
+e2e/*.csv
+e2e/*.yaml
+e2e/*.md

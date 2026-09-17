@@ -1,0 +1,64 @@
+name: Bug 报告
+description: 某个工具或功能没有按预期工作
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！提交前请先搜索是否已有相同的 Issue。
+        **安全漏洞请不要在这里提交**，请按 [安全策略](https://github.com/Okysu/OmniTool/blob/main/SECURITY.md) 私下报告。
+  - type: input
+    id: tool
+    attributes:
+      label: 涉及的工具或页面
+      placeholder: 例如：音视频工具箱 → 波形图与频谱图
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 包括界面上显示的完整错误信息。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望的结果
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开 …
+        2. 拖入 …（文件类型、大小）
+        3. 设置参数 …
+        4. 点击「开始处理」
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: 样例文件
+      description: 如果可以公开，请附上能复现问题的文件（或下载链接）。涉及隐私的文件请勿上传。
+  - type: input
+    id: version
+    attributes:
+      label: OmniTool 版本或部署地址
+      placeholder: 例如 0.5.0，或 https://your-deploy.vercel.app
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器与操作系统
+      placeholder: 例如 Chrome 140 / Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息
+      description: 「设置 → 诊断」中的沙盒隔离、跨源隔离、FFmpeg、ONNX 状态；以及浏览器控制台中的相关报错。
+      render: text

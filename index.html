@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OmniTool · 本地优先多媒体工具箱</title>
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#15803d" />
+    <meta name="description" content="Local-first multimedia & file toolkit. All processing happens in your browser." />
+    <script>
+      // Apply the persisted theme before first paint to avoid a flash.
+      try {
+        const t = localStorage.getItem('omnitool.theme') || 'system'
+        const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', dark)
+      } catch {}
+    </script>
+  </head>
+  <body class="h-full">
+    <div id="app" class="h-full"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

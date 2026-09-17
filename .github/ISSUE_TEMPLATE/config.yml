@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞
+    url: https://github.com/Okysu/OmniTool/security/advisories/new
+    about: 请私下报告安全问题，不要公开提交 Issue。
+  - name: 插件开发文档
+    url: https://github.com/Okysu/OmniTool/blob/main/docs/design/02-plugin-api.md
+    about: 写插件遇到问题，先查阅 Plugin API 参考。
