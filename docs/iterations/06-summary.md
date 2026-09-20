@@ -13,6 +13,7 @@
 7. 音视频转频谱图很慢，是否可以引入快速 FFT 之类的库。
 8. 重复导入同一素材会让工作区空间变大；选素材时希望能从素材库中选择，并按工具过滤好。
 9. 增加偏程序员的工具：二进制、时间戳获取与转换、Base64、JWT 等，包括但不限于。
+10. 音频上传组件支持麦克风录入，由组件而不是插件接触这些权限。
 
 ## 一、逐项结果
 
@@ -48,6 +49,12 @@
 新增内置插件「开发者工具箱」与分类「开发者工具」，共 16 个工具：时间戳转换、进制转换、Base64 编解码、JWT 解析与签名、哈希与校验和、URL 解析与编解码、UUID / ID 与密码生成、正则表达式测试、文本对比、Cron 表达式解析、十六进制查看、命名风格转换、字符串转义、JSON 转类型定义、Unix 权限计算、颜色格式转换。多数是实时面板，结果区带「复制」按钮；也都可以「导出为文件」。
 
 为此对 Plugin API 做了两处向后兼容的新增：分类 `dev`，以及带复制按钮的 `code` 面板节点（插件无法访问剪贴板）。数据工具箱里原有的「编码与哈希」保留不动，开发者工具箱中的 Base64 与哈希功能更完整（URL 安全字母表、Data URI、二进制识别、MD5 / CRC32 / HMAC、期望值比对）。
+
+### 麦克风录音
+
+接受 `audio/*` 的工具（语音转字幕、波形图与频谱图、音频处理、音频分割、云端语音转写等）在输入区多出「录音」按钮：设备选择、电平表、暂停 / 继续、试听后再保存，保存后就是一个普通输入文件。
+
+按需求把权限留在宿主：`getUserMedia` 与 `MediaRecorder` 都在主线程组件里，插件没有新增能力，沙盒里也依然没有 `navigator.mediaDevices`。按钮是否出现，用的是拖入文件同一套 `accept` 判断，因此所有内置音频工具（以及第三方插件，只要声明 `audio/*`）不改一行代码就有了录音入口。详见架构文档 15.12。
 
 ## 二、关键决策
 
@@ -87,6 +94,6 @@
 
 ## 六、数据
 
-- 单元测试 **448** 个（新增 `ext-ai-toolkit.test.ts` 34 个、`dev-tools.test.ts` 25 个、`analyze.test.ts` 4 个、`pipelines-store.test.ts` 4 个、`vfs-dedupe.test.ts` 5 个，`media-tools.test.ts` 声谱图 +2，`schema.test.ts` +1）。
-- 端到端 **193** 项检查全部通过：smoke 14、tools 91、ui 24、flows 23（重写）、editor 8、extensions 20（新增）、ai 13。场景见 [测试场景](../testing/06-test-scenarios.md)。
+- 单元测试 **453** 个（新增 `ext-ai-toolkit.test.ts` 34 个、`dev-tools.test.ts` 25 个、`analyze.test.ts` 4 个、`pipelines-store.test.ts` 4 个、`vfs-dedupe.test.ts` 5 个，`media-tools.test.ts` 声谱图 +2，`schema.test.ts` +1、`recording.test.ts` 5 个）。
+- 端到端 **198** 项检查全部通过：smoke 14、tools 91、ui 29、flows 23（重写）、editor 8、extensions 20（新增）、ai 13。场景见 [测试场景](../testing/06-test-scenarios.md)。
 - 类型检查、生产构建通过。

@@ -66,7 +66,7 @@ Image processing belongs in the sandbox with `OffscreenCanvas`: it runs off the 
 | `name` | string | yes | Display name |
 | `category` | string | yes | `pdf`, `media`, `image`, `document`, `dev`, `ai`, `archive`, `other` |
 | `description`, `icon`, `keywords` | | | Shown on cards and used by search |
-| `accept` | string[] | | File filter: extensions (`.pdf`), wildcards (`image/*`) or exact MIME types |
+| `accept` | string[] | | File filter: extensions (`.pdf`), wildcards (`image/*`) or exact MIME types. Accepting `audio/*` also gives the tool a Record button: the host opens the microphone and your tool just receives the recorded file |
 | `multiple` | boolean | | Accept several files. Default `false`. |
 | `minFiles` | number | | Inputs required before the run button enables. Default `1` (`0` with `input: 'none'`). |
 | `input` | string | | `'files'` (default, drop zone), `'text'` (text box), `'both'` (tabs), `'none'` (no input; generators) |

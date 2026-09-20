@@ -3,7 +3,8 @@ const DIR = new URL('./', import.meta.url).pathname
 const BASE = process.env.BASE_URL ?? 'http://localhost:4173'
 const results = []
 const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`) }
-const browser = await chromium.launch()
+// A fake microphone with auto-granted permission, for the recorder check below.
+const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'] })
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
 const errors = []
 page.on('pageerror', e => errors.push(e.message))
@@ -192,6 +193,34 @@ try {
   await waitDone()
   const hashOut = await page.textContent('pre')
   check('hash tool takes pasted text', hashOut.includes('2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  input.txt'), hashOut.trim().slice(0, 90))
+
+  /* Microphone recording: the host records, the plugin only sees a file */
+  await page.context().grantPermissions(['microphone'])
+  await page.goto(`${BASE}/#/t/omnitool.image/resize`, { waitUntil: 'commit' })
+  await page.waitForSelector('main input[type=file]', { state: 'attached', timeout: 30000 })
+  check('image tools are not offered a recorder', (await page.locator('[data-record-audio]').count()) === 0)
+
+  await page.goto(`${BASE}/#/t/omnitool.media/waveform`, { waitUntil: 'commit' })
+  await page.waitForSelector('[data-record-audio]', { timeout: 30000 })
+  await page.click('[data-record-audio]')
+  await page.waitForSelector('[data-audio-recorder]')
+  await page.click('[data-recorder-start]')
+  await page.waitForSelector('[data-recorder-stop]', { timeout: 15000 })
+  await page.waitForTimeout(1600)
+  const clock = await page.textContent('[data-recorder-time]')
+  await page.click('[data-recorder-stop]')
+  await page.waitForSelector('[data-recorder-save]', { timeout: 15000 })
+  check('recorder runs and counts the elapsed time', /0:0[1-9]/.test(clock), clock)
+  check('recording can be listened back before saving', (await page.locator('[data-audio-recorder] audio').count()) === 1)
+  await page.click('[data-recorder-save]')
+  await page.waitForSelector('main li:has-text("录音-")', { timeout: 15000 })
+  const recorded = await page.textContent('main li:has-text("录音-")')
+  check('the recording lands in the tool as an ordinary input file', /录音-\d{8}-\d{6}\.(webm|ogg|m4a)/.test(recorded), recorded.replace(/\s+/g, ' ').trim())
+
+  await page.click('button:has-text("开始处理")')
+  await waitDone()
+  const waveform = await page.textContent('[data-task-status]')
+  check('a plugin processes the recording without touching the microphone', /已生成 1 张图/.test(waveform), waveform.replace(/\s+/g, ' ').trim().slice(0, 80))
 
   check('no page errors', errors.length === 0, errors.slice(0, 2).join(' | '))
 } catch (e) {

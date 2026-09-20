@@ -79,7 +79,7 @@ definePlugin({
 | `name` | string | ✓ | 显示名 |
 | `category` | string | ✓ | `pdf` `media` `image` `document` `dev` `ai` `archive` `other` |
 | `description` / `icon` / `keywords` | | | 卡片、工具页、命令面板检索 |
-| `accept` | string[] | | 文件选择器过滤，如 `['image/*', '.heic']` |
+| `accept` | string[] | | 文件选择器过滤，如 `['image/*', '.heic']`。接受音频（`audio/*`）的工具，输入区会自动多出「录音」按钮：麦克风由宿主调用，插件拿到的只是一个普通输入文件 |
 | `multiple` | boolean | | 是否接受多文件，默认 `false` |
 | `minFiles` | number | | 可运行所需最少输入数，默认 `1`（`input: 'none'` 时为 `0`） |
 | `input` | string | | **v2** 输入方式，见下 |

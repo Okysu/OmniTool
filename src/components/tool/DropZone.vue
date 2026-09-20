@@ -9,11 +9,16 @@
  *
  * Removing a file from the list only deselects it: the same workspace file may
  * be selected in another tool or workflow. Deleting is done on the workspace page.
+ *
+ * Tools that accept audio also get a recorder. The microphone is opened here,
+ * by the host, and the tool receives the finished file - so no plugin ever has
+ * to be trusted with the device.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import { Button } from '@/components/ui/button'
 import WorkspacePicker from './WorkspacePicker.vue'
+import AudioRecorder from './AudioRecorder.vue'
 import * as vfs from '@/core/vfs'
 import { pushToast } from '@/core/ui/toast'
 import { matchesAccept } from '@/core/plugin/params'
@@ -37,6 +42,23 @@ const acceptAttr = computed(() => (props.accept.length ? props.accept.join(',') 
 const pasteChord = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'
 
 const entries = computed(() => props.files.map((id) => vfs.get(id)).filter((e): e is vfs.VfsEntry => Boolean(e)))
+
+const recorderOpen = ref(false)
+/** Only for tools that take audio; a recording is `audio/webm` or `audio/mp4`. */
+const canRecord = computed(
+  () =>
+    typeof navigator !== 'undefined' &&
+    !!navigator.mediaDevices?.getUserMedia &&
+    typeof MediaRecorder !== 'undefined' &&
+    [
+      { name: '录音.webm', type: 'audio/webm' },
+      { name: '录音.m4a', type: 'audio/mp4' },
+    ].some((candidate) => matchesAccept(candidate, props.accept)),
+)
+
+function onRecorded(id: string) {
+  emit('add', props.multiple ? [id] : [id])
+}
 
 const pickerOpen = ref(false)
 /** Workspace files this tool could take that are not selected yet. */
@@ -151,10 +173,15 @@ onUnmounted(() => window.removeEventListener('paste', onPaste))
           <Icon name="layers" :size="14" />
           从工作区选择<span v-if="available" class="tabular-nums text-muted-foreground">（{{ available }}）</span>
         </Button>
+        <Button v-if="canRecord" variant="ghost" size="sm" title="用麦克风录一段音频" data-record-audio @click="recorderOpen = true">
+          <Icon name="waves" :size="14" />
+          录音
+        </Button>
       </div>
     </div>
 
     <WorkspacePicker v-model:open="pickerOpen" :accept="accept" :multiple="multiple" :selected="files" @pick="onPick" />
+    <AudioRecorder v-if="canRecord" v-model:open="recorderOpen" @recorded="onRecorded" />
 
     <!-- Selected files -->
     <ul v-if="entries.length" class="mt-3 space-y-1.5">
