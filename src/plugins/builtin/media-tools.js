@@ -99,7 +99,7 @@ definePlugin({
           }
 
           const filters = []
-          if (p.resolution !== 'keep') filters.push(`scale=${p.resolution}:-2:flags=lanczos`)
+          if (p.codec !== 'copy' && p.resolution !== 'keep') filters.push(`scale=${p.resolution}:-2:flags=lanczos`)
           if (filters.length) args.push('-vf', filters.join(','))
           if (Number(p.fps) > 0) args.push('-r', String(Number(p.fps)))
 
@@ -111,7 +111,7 @@ definePlugin({
           args.push('-y', `$out${0}`)
 
           const name = `${baseName(input.name)}.${p.container}`
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             args, inputs: [input.id], outputs: [name],
             label: `转码 ${input.name}（${index + 1}/${ctx.inputs.length}）`,
           })
@@ -201,13 +201,13 @@ definePlugin({
             const videoKbps = targetVideoKbps(Number(p.targetMB), duration)
 
             // Two passes so the encoder can actually hit the target.
-            const pass1 = await host.ffmpeg.run({
+            const pass1 = await runMediaFfmpeg({
               args: ['-i', '$in0', ...scale, '-c:v', 'libx264', '-b:v', `${videoKbps}k`, '-pass', '1', '-an', '-f', 'mp4', '-y', '$out0'],
               inputs: [input.id], outputs: ['pass1.mp4'], label: `${label} · 第 1 遍`,
             })
             // The first pass exists only to build the rate-control stats file.
             await host.fs.remove(pass1.files[0].id).catch(() => {})
-            result = await host.ffmpeg.run({
+            result = await runMediaFfmpeg({
               args: [
                 '-i', '$in0', ...scale, '-c:v', 'libx264', '-b:v', `${videoKbps}k`, '-pass', '2',
                 '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-y', '$out0',
@@ -215,7 +215,7 @@ definePlugin({
               inputs: [input.id], outputs: [name], label: `${label} · 第 2 遍`,
             })
           } else {
-            result = await host.ffmpeg.run({
+            result = await runMediaFfmpeg({
               args: [
                 '-i', '$in0', ...scale, '-c:v', 'libx264', '-crf', String(p.level), '-preset', 'medium',
                 '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-y', '$out0',
@@ -292,7 +292,7 @@ definePlugin({
         }
 
         const name = `${baseName(input.name)}-${clockName(start)}-${clockName(end ?? 0)}${extension}`
-        const result = await host.ffmpeg.run({ args, inputs: [input.id], outputs: [name], label: `导出 ${input.name} 的片段` })
+        const result = await runMediaFfmpeg({ args, inputs: [input.id], outputs: [name], label: `导出 ${input.name} 的片段` })
         return { outputs: [result.files[0].id], summary: `已导出 ${formatSpan(start)} → ${end !== undefined ? formatSpan(end) : '结尾'} 的片段` }
       },
     },
@@ -347,7 +347,7 @@ definePlugin({
           args.push('-y', '$out0')
 
           const name = `${baseName(input.name)}.${extension}`
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             args, inputs: [input.id], outputs: [name],
             label: `提取音轨 ${input.name}（${index + 1}/${ctx.inputs.length}）`,
           })
@@ -467,7 +467,7 @@ definePlugin({
           args.push('-y', '$out0')
 
           const name = `${baseName(input.name)}-edited.${p.format}`
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             args, inputs: [input.id], outputs: [name],
             label: `处理 ${input.name}（${index + 1}/${ctx.inputs.length}）`,
           })
@@ -623,7 +623,7 @@ definePlugin({
           args.push('-movflags', '+faststart', '-y', '$out0')
 
           const name = `${baseName(input.name)}-edited.mp4`
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             args, inputs: [input.id], outputs: [name],
             label: `处理 ${input.name}（${index + 1}/${ctx.inputs.length}）`,
           })
@@ -713,13 +713,13 @@ definePlugin({
           // A generated palette is the difference between a usable GIF and a
           // dithered mess; it needs its own pass over the clip. The palette
           // comes back as a workspace file, which the second pass mounts.
-          const paletteRun = await host.ffmpeg.run({
+          const paletteRun = await runMediaFfmpeg({
             args: [...seek, '-i', '$in0', '-vf', `${scale},palettegen=stats_mode=diff`, '-y', '$out0'],
             inputs: [input.id], outputs: ['palette.png'], label: `${label} · 生成调色板`,
           })
           const palette = paletteRun.files[0]
           try {
-            result = await host.ffmpeg.run({
+            result = await runMediaFfmpeg({
               args: [
                 ...seek, '-i', '$in0', '-i', '$in1',
                 '-lavfi', `${scale}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3`,
@@ -732,12 +732,12 @@ definePlugin({
             await host.fs.remove(palette.id).catch(() => {})
           }
         } else if (p.format === 'apng') {
-          result = await host.ffmpeg.run({
+          result = await runMediaFfmpeg({
             args: [...seek, '-i', '$in0', '-vf', scale, '-c:v', 'apng', '-plays', p.loop ? '0' : '1', '-f', 'apng', '-an', '-y', '$out0'],
             inputs: [input.id], outputs: [name], label,
           })
         } else {
-          result = await host.ffmpeg.run({
+          result = await runMediaFfmpeg({
             args: [...seek, '-i', '$in0', '-vf', scale, '-c:v', 'libwebp', '-lossless', '0', '-q:v', '70', '-loop', p.loop ? '0' : '1', '-an', '-y', '$out0'],
             inputs: [input.id], outputs: [name], label,
           })
@@ -807,7 +807,7 @@ definePlugin({
           const outputs = []
           for (const [index, at] of times.entries()) {
             ctx.throwIfAborted()
-            const result = await host.ffmpeg.run({
+            const result = await runMediaFfmpeg({
               args: ['-ss', String(at), '-i', '$in0', ...(scale ? ['-vf', scale] : []), '-frames:v', '1', '-y', '$out0'],
               inputs: [input.id], outputs: [`${base}-${stampName(at)}.${p.format}`],
               label: `导出第 ${index + 1}/${times.length} 帧`,
@@ -833,7 +833,7 @@ definePlugin({
         // The frame count is not knowable in advance, so declare a sequence
         // pattern and let the host collect whatever ffmpeg actually wrote.
         const limit = p.mode === 'count' ? Number(p.count) : 500
-        const result = await host.ffmpeg.run({
+        const result = await runMediaFfmpeg({
           args: [...window, '-i', '$in0', '-vf', filters, '-fps_mode', 'vfr', '-frames:v', String(limit), '-y', '$out0'],
           inputs: [input.id], outputs: [`${base}-%04d.${p.format}`], label: '抽帧中',
         })
@@ -898,7 +898,7 @@ definePlugin({
 
         if (ctx.params.mode === 'replace-audio') {
           if (inputs.length < 2) throw new Error('需要两个文件：第 1 个提供画面，第 2 个提供声音')
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             args: ['-i', '$in0', '-i', '$in1', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', '-y', '$out0'],
             inputs: [inputs[0].id, inputs[1].id], outputs: [name], label: '替换音轨',
           })
@@ -945,7 +945,7 @@ definePlugin({
           )
         }
 
-        const result = await host.ffmpeg.run({
+        const result = await runMediaFfmpeg({
           args, inputs: inputs.map((i) => i.id), outputs: [name], label: `拼接 ${n} 个片段`,
         })
         return { outputs: [result.files[0].id], summary: `已拼接 ${n} 个片段` }
@@ -1036,7 +1036,7 @@ definePlugin({
           }
 
           const suffix = { blurpad: `-${String(p.aspect).replace(':', 'x')}`, reverse: '-reversed', fps: `-${p.fps}fps`, stabilize: '-stabilized', denoise: '-denoised', metadata: '-clean' }[effect] ?? '-effect'
-          const result = await host.ffmpeg.run({ args, inputs: [input.id], outputs: [`${baseName(input.name)}${suffix}${extension}`], label })
+          const result = await runMediaFfmpeg({ args, inputs: [input.id], outputs: [`${baseName(input.name)}${suffix}${extension}`], label })
           outputs.push(result.files[0].id)
         })
 
@@ -1110,7 +1110,7 @@ definePlugin({
           const stop = Math.min(end ?? start + 30, start + 40)
           const span = stop - start
           const filters = p.fade && span > 3 ? ['-af', `afade=t=in:st=0:d=1,afade=t=out:st=${(span - 1.5).toFixed(2)}:d=1.5`] : []
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             args: ['-ss', String(start), '-to', String(stop), '-i', '$in0', '-vn', ...filters, '-c:a', 'aac', '-b:a', '192k', '-f', 'ipod', '-y', '$out0'],
             inputs: [input.id], outputs: [`${base}.m4r`], label: '导出铃声',
           })
@@ -1130,7 +1130,7 @@ definePlugin({
         for (let i = 0; i < bounds.length - 1; i++) {
           ctx.throwIfAborted()
           ctx.progress(i / (bounds.length - 1), `导出第 ${i + 1}/${bounds.length - 1} 段`)
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             // Re-encoding keeps every cut exactly where it was marked; stream copy snaps to packets.
             args: ['-ss', bounds[i].toFixed(3), '-to', bounds[i + 1].toFixed(3), '-i', '$in0', '-vn', ...codec, '-y', '$out0'],
             inputs: [input.id], outputs: [`${base}-${String(i + 1).padStart(2, '0')}.${format}`],
@@ -1184,7 +1184,7 @@ definePlugin({
           }
           const color = /^#?[0-9a-f]{6}$/i.test(String(p.color)) ? `0x${String(p.color).replace('#', '')}` : '0x16a34a'
           const filter = `showwavespic=s=${size}:colors=${color}:split_channels=${p.split ? 1 : 0}`
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             args: ['-i', '$in0', '-filter_complex', `[0:a:0]${filter}`, '-frames:v', '1', '-update', '1', '-y', '$out0'],
             inputs: [input.id], outputs: [`${baseName(input.name)}-${p.kind}.png`],
             label: `绘制 ${input.name}（${index + 1}/${ctx.inputs.length}）`,
@@ -1255,7 +1255,7 @@ definePlugin({
             webm: ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '32'],
             apng: ['-c:v', 'apng', '-plays', '0', '-f', 'apng'],
           }[format]
-          const result = await host.ffmpeg.run({ args: [...loop, '-i', '$in0', ...codec, '-an', '-y', '$out0'], inputs: [gif.id], outputs: [`${base}.${format === 'apng' ? 'png' : format}`], label: `转换 ${gif.name}` })
+          const result = await runMediaFfmpeg({ args: [...loop, '-i', '$in0', ...codec, '-an', '-y', '$out0'], inputs: [gif.id], outputs: [`${base}.${format === 'apng' ? 'png' : format}`], label: `转换 ${gif.name}` })
           return { outputs: [result.files[0].id], summary: `已转换为 ${format.toUpperCase()}（${bytesLabel(gif.size)} → ${bytesLabel(result.files[0].size)}）` }
         }
 
@@ -1285,7 +1285,7 @@ definePlugin({
         if (audio) args.push('-map', `${order.length}:a:0`, '-c:a', 'aac', '-b:a', '192k', '-shortest')
         args.push('-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-r', '30', '-movflags', '+faststart', '-y', '$out0')
 
-        const result = await host.ffmpeg.run({ args, inputs, outputs: ['slideshow.mp4'], label: `合成 ${order.length} 张图片` })
+        const result = await runMediaFfmpeg({ args, inputs, outputs: ['slideshow.mp4'], label: `合成 ${order.length} 张图片` })
         return { outputs: [result.files[0].id], summary: `已生成 ${formatSpan(order.length * seconds)} 的视频（${width}×${height}）` }
       },
     },
@@ -1369,7 +1369,7 @@ definePlugin({
             }
             // Audio is re-encoded: Opus or Vorbis from a WebM cannot be copied into MP4.
             args.push('-c:v', 'libx264', '-crf', '21', '-preset', 'medium', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '-y', '$out0')
-            const result = await host.ffmpeg.run({ args, inputs, outputs: [`${baseName(video.name)}-watermarked.mp4`], label: `添加水印 ${video.name}（${index + 1}/${videos.length}）` })
+            const result = await runMediaFfmpeg({ args, inputs, outputs: [`${baseName(video.name)}-watermarked.mp4`], label: `添加水印 ${video.name}（${index + 1}/${videos.length}）` })
             outputs.push(result.files[0].id)
           }
         } finally {
@@ -1422,7 +1422,7 @@ definePlugin({
               const source = await utf8Subtitle(sub, scratch)
               const offset = (Number(p.offset) || 0) / 1000
               const target = String(p.target)
-              const result = await host.ffmpeg.run({
+              const result = await runMediaFfmpeg({
                 args: [...(offset ? ['-itsoffset', String(offset)] : []), '-i', '$in0', '-c:s', SUBTITLE_CODECS[target], '-y', '$out0'],
                 inputs: [source.id], outputs: [`${baseName(sub.name)}${offset ? '-shifted' : ''}.${target}`], label: `转换 ${sub.name}`,
               })
@@ -1437,7 +1437,7 @@ definePlugin({
             const target = String(p.target)
             for (const video of videos) {
               const track = Math.max(1, Math.round(Number(p.track) || 1)) - 1
-              const result = await host.ffmpeg.run({
+              const result = await runMediaFfmpeg({
                 args: ['-i', '$in0', '-map', `0:s:${track}`, '-c:s', SUBTITLE_CODECS[target], '-y', '$out0'],
                 inputs: [video.id], outputs: [`${baseName(video.name)}.${target}`], label: `提取 ${video.name} 的字幕`,
               }).catch((err) => {
@@ -1454,7 +1454,7 @@ definePlugin({
 
           if (p.mode === 'embed') {
             const mkv = p.container === 'mkv'
-            const result = await host.ffmpeg.run({
+            const result = await runMediaFfmpeg({
               args: [
                 '-i', '$in0', '-i', '$in1', '-map', '0:v', '-map', '0:a?', '-map', '1:0', '-c:v', 'copy', '-c:a', 'copy',
                 '-c:s', mkv ? (/\.(ass|ssa)$/i.test(subtitles[0].name) ? 'ass' : 'srt') : 'mov_text',
@@ -1468,7 +1468,7 @@ definePlugin({
           // Burn: libass needs a font it can find by file, since there is no system font here.
           const font = await cjkFont(scratch)
           const style = `FontName=Noto Sans SC,FontSize=${Math.round(Number(p.fontSize) || 24)},MarginV=${Math.round(Number(p.margin) || 24)},Outline=2,Shadow=0`
-          const result = await host.ffmpeg.run({
+          const result = await runMediaFfmpeg({
             args: ['-i', '$in0', '-vf', `subtitles=$in1:fontsdir=/:force_style='${style}'`, '-c:v', 'libx264', '-crf', '20', '-preset', 'medium', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '-y', '$out0'],
             inputs: [video.id, source.id, font.id], outputs: [`${baseName(video.name)}-hardsub.mp4`], label: '烧录字幕',
           })
@@ -1692,7 +1692,7 @@ async function drawSpectrogram(ctx, input, p, index) {
   const wanted = Number(p.rate) || 22050
   const duration = (await host.ffmpeg.probe(input.id)).durationSeconds || 0
   const rate = PCM_RATES.find((r) => r <= wanted && (!duration || duration * r * 2 <= PCM_BYTE_LIMIT)) ?? 8000
-  const { files } = await host.ffmpeg.run({
+  const { files } = await runMediaFfmpeg({
     args: ['-i', '$in0', '-vn', '-ac', '1', '-ar', String(rate), '-f', 's16le', '-c:a', 'pcm_s16le', '-y', '$out0'],
     inputs: [input.id], outputs: ['spectrum.pcm'], label: `解码 ${input.name}（${index + 1}/${ctx.inputs.length}）`,
   })
@@ -2052,4 +2052,27 @@ function deltaLabel(before, after) {
   if (before <= 0) return '-'
   const pct = ((after - before) / before) * 100
   return `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
+}
+
+/** All built-in H.264/HEVC exports use 4:2:0; preserve odd edge pixels by padding. */
+function runMediaFfmpeg(options) {
+  const args = [...options.args]
+  const codec = args[args.indexOf('-c:v') + 1]
+  if (codec === 'libx264' || codec === 'libx265') {
+    const pad = 'pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p'
+    const complex = args.indexOf('-filter_complex')
+    const simple = args.indexOf('-vf')
+    if (complex !== -1) {
+      // Built-in complex graphs expose their final video as [v].
+      args[complex + 1] += `;[v]${pad}[even]`
+      for (let i = 0; i < args.length - 1; i++) {
+        if (args[i] === '-map' && args[i + 1] === '[v]') args[i + 1] = '[even]'
+      }
+    } else if (simple !== -1) {
+      args[simple + 1] += `,${pad}`
+    } else {
+      args.splice(args.length - 1, 0, '-vf', pad)
+    }
+  }
+  return host.ffmpeg.run({ ...options, args })
 }

@@ -407,6 +407,13 @@ try {
   }, 300000)
   check('ffmpeg transcode to 720p MP4', /已转码 1 个视频为 MP4/.test(summary), summary.slice(0, 160))
 
+  summary = await runTool('omnitool.media', 'convert-video', [`${DIR}odd.webm`], null, 300000)
+  check('ffmpeg odd-sized WebM → MP4', /已转码 1 个视频为 MP4/.test(summary), summary.slice(0, 160))
+  await page.getByRole('button', { name: '预览 odd.mp4', exact: true }).click()
+  await page.waitForFunction(() => document.querySelector('[role=dialog] video')?.videoWidth === 566 && document.querySelector('[role=dialog] video')?.videoHeight === 448)
+  check('odd video preserves width and pads height to 448', true)
+  await page.keyboard.press('Escape')
+
   summary = await runTool('omnitool.media', 'frames', [`${DIR}clip.mp4`], async (p) => {
     // Mark two frames on the timeline: seek by clicking the strip, then mark.
     await p.waitForFunction(() => document.querySelector('main video')?.readyState >= 1)

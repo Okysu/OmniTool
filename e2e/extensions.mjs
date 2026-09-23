@@ -85,10 +85,11 @@ async function openTool(toolId) {
   await page.goto(`${BASE}/#/t/omnitool.ext.ai/${toolId}`, { waitUntil: 'commit' })
 }
 
-async function runAndWait(timeout = 60000) {
+async function runAndWait(timeout = 60000, approveNetwork = false) {
   const start = page.locator('main aside button').last()
   await start.scrollIntoViewIfNeeded()
   await start.click()
+  if (approveNetwork) await page.getByRole('button', { name: '允许此来源', exact: true }).click()
   await page.waitForSelector('[data-task-status="done"], [data-task-status="failed"]', { timeout })
   await page.waitForTimeout(200)
   return (await page.textContent('main section')).replace(/\s+/g, ' ')
@@ -145,7 +146,7 @@ try {
   check('saved connection is restored into the panel', (await page.inputValue('#panel-baseUrl')) === API)
   await page.waitForSelector('text=已录入（仅发往', { timeout: 15000 })
 
-  summary = await runAndWait()
+  summary = await runAndWait(60000, true)
   check('connection test succeeds with the stored key', summary.includes('fake-chat 响应正常') && summary.includes('OK'), summary.slice(0, 160))
   check('server received the key only as a substituted header', seen.at(-1)?.authorization === `Bearer ${KEY}`)
   const pluginHeap = await page.evaluate((key) => document.documentElement.innerHTML.includes(key), KEY)

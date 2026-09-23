@@ -26,3 +26,5 @@ public/llms.txt
 public/llms-full.txt
 .claude/
 .vitest/
+
+e2e/*.webm

@@ -23,6 +23,7 @@ import {
   referencedSecrets,
   substituteSecrets,
 } from './vault'
+import { authorizeNetwork } from './network'
 import { probeFfmpeg, runFfmpeg } from './ffmpeg'
 import { disposeTensors, loadModel, releaseSession, runSession, sessionInfo, type ModelSpec, type TensorInput } from './onnx'
 
@@ -43,6 +44,8 @@ export interface CapabilityContext {
   ownedOutputs: Set<string>
   /** Trusted (built-in) plugins skip the local-network guard. */
   trusted: boolean
+  /** Identity of the sandbox; approvals expire when it is replaced. */
+  networkScope?: object
   /** Forwards long-running host work (ffmpeg, model downloads) to the task row. */
   onProgress?: (ratio: number | null, label: string) => void
   /** Aborts when the user cancels the invocation. */
@@ -230,19 +233,14 @@ function announceSecretUse(pluginId: string, pluginName: string, origin: string,
   })
 }
 
-const PRIVATE_HOST_RE =
-  /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|\[?f[cd])/i
-
 const netHandlers: Record<string, Handler> = {
   'net.fetch': async (ctx, [rawUrl, rawInit]) => {
     const url = new URL(str(rawUrl, 'url'))
     if (url.protocol !== 'https:' && url.protocol !== 'http:') {
       throw new Error(`不支持的协议：${url.protocol}`)
     }
-    if (!ctx.trusted && !settings.allowLocalNetwork) {
-      if (PRIVATE_HOST_RE.test(url.hostname) || url.origin === location.origin) {
-        throw new Error('已阻止插件访问本机/内网地址。如确需放行，请在「设置 › 安全」中开启。')
-      }
+    if (!ctx.trusted) {
+      await authorizeNetwork(ctx.networkScope ?? ctx, ctx.pluginName, url, settings.allowLocalNetwork, ctx.signal)
     }
 
     const init = (rawInit ?? {}) as Record<string, unknown>
@@ -289,7 +287,8 @@ const netHandlers: Record<string, Handler> = {
       // Plugin traffic never carries the user's cookies or auth.
       credentials: 'omit',
       referrerPolicy: 'no-referrer',
-      redirect: 'follow',
+      // Do not forward bodies or credentials across an unchecked redirect.
+      redirect: 'error',
       mode: 'cors',
       signal: ctx.signal,
     })

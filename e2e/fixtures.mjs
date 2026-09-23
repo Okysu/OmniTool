@@ -276,6 +276,30 @@ writeFileSync(dir + 'bundle.zip', zipSync({ 'docs/readme.txt': strToU8('hello'),
     <div style="font-size:44px;color:#111">本地离线识别 OCR 2026</div>
     <div style="font-size:36px;color:#333;margin-top:40px">Hello, OmniTool!</div></body>`)
   await page.screenshot({ path: dir + 'ocr.png' })
+  // Browser recordings can have odd dimensions. No native libvpx dependency.
+  const oddWebm = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 566
+    canvas.height = 447
+    const context = canvas.getContext('2d')
+    const stream = canvas.captureStream(10)
+    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' })
+    const chunks = []
+    recorder.ondataavailable = (event) => chunks.push(event.data)
+    const stopped = new Promise((resolve) => { recorder.onstop = resolve })
+    recorder.start()
+    for (let index = 0; index < 5; index++) {
+      context.fillStyle = index % 2 ? 'red' : 'blue'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    recorder.stop()
+    await stopped
+    stream.getTracks().forEach((track) => track.stop())
+    return Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer()))
+  })
+  writeFileSync(dir + 'odd.webm', new Uint8Array(oddWebm))
+
   await page.setViewportSize({ width: 160, height: 120 })
   await page.setContent(`<body style="margin:0;width:160px;height:120px;background:linear-gradient(135deg,#9ec9e8,#e8e1c9)">
     <div style="position:absolute;left:48px;top:24px;width:64px;height:72px;border-radius:50% 50% 40% 40%;background:radial-gradient(circle at 35% 30%,#ff9a6b,#c0392b)"></div></body>`)

@@ -10,6 +10,7 @@ beforeAll(() => {
 const clip = { name: 'clip.mp4', content: new Uint8Array(16), type: 'video/mp4' }
 const tone = { name: 'tone.m4a', content: new Uint8Array(16), type: 'audio/mp4' }
 
+const EVEN = 'pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p'
 /** The value following `flag` in an ffmpeg argument list. */
 const argAfter = (args: string[], flag: string) => args[args.indexOf(flag) + 1]
 
@@ -34,19 +35,19 @@ describe('video-edit', () => {
     })
     const vf = argAfter(result.ffmpeg[0].args, '-vf').split(',')
     expect(vf[0]).toBe('crop=trunc(iw*0.7500/2)*2:trunc(ih*1.0000/2)*2:trunc(iw*0.1250):trunc(ih*0.0000)')
-    expect(vf.slice(1)).toEqual(['transpose=1', 'hflip', 'eq=brightness=0.100:contrast=1.200', 'hue=h=30'])
+    expect(vf.slice(1)).toEqual(['transpose=1', 'hflip', 'eq=brightness=0.100:contrast=1.200', 'hue=h=30', ...EVEN.split(',')])
   })
 
   it('ignores a stale crop box when cropping is off', async () => {
     const result = await plugin.run('video-edit', [clip], { cropOn: false, crop: [0.1, 0.1, 0.5, 0.5] })
-    expect(result.ffmpeg[0].args).not.toContain('-vf')
+    expect(argAfter(result.ffmpeg[0].args, '-vf')).toBe(EVEN)
   })
 
   it('trims with an input-side seek and keeps audio in step with speed', async () => {
     const result = await plugin.run('video-edit', [clip], { range: [2, 6], speed: 250 })
     const args = result.ffmpeg[0].args
     expect(args.slice(0, 5)).toEqual(['-ss', '2', '-to', '6', '-i'])
-    expect(argAfter(args, '-vf')).toBe('setpts=PTS/2.5000')
+    expect(argAfter(args, '-vf')).toBe('setpts=PTS/2.5000,' + EVEN)
     expect(argAfter(args, '-af')).toBe('atempo=2.0,atempo=1.2500')
   })
 
@@ -92,7 +93,7 @@ describe('missing or mistyped parameters', () => {
 
   it('coerce numbers and numeric strings to the default type', async () => {
     const result = await plugin.run('video-edit', [clip], { rotate: 270, contrast: '150' })
-    expect(argAfter(result.ffmpeg[0].args, '-vf')).toBe('transpose=2,eq=contrast=1.500')
+    expect(argAfter(result.ffmpeg[0].args, '-vf')).toBe('transpose=2,eq=contrast=1.500,' + EVEN)
   })
 })
 
@@ -213,7 +214,7 @@ describe('merge', () => {
     expect(graph).toContain('[1:v:0]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360')
     expect(graph).toContain('anullsrc=r=48000:cl=stereo,atrim=duration=2.000[a1]')
     expect(graph).toContain('[0:a:0]aresample=48000')
-    expect(graph.endsWith('[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]')).toBe(true)
+    expect(graph.endsWith('[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a];[v]' + EVEN + '[even]')).toBe(true)
   })
 
   it('joins audio-only inputs without a video stream', async () => {
@@ -266,7 +267,7 @@ describe('video-effects', () => {
 
   it('reverses picture and, optionally, sound', async () => {
     const withAudio = await plugin.run('video-effects', [clip], { effect: 'reverse', reverseAudio: true })
-    expect(argAfter(withAudio.ffmpeg[0].args, '-vf')).toBe('reverse')
+    expect(argAfter(withAudio.ffmpeg[0].args, '-vf')).toBe('reverse,' + EVEN)
     expect(argAfter(withAudio.ffmpeg[0].args, '-af')).toBe('areverse')
     const silentReverse = await plugin.run('video-effects', [clip], { effect: 'reverse', reverseAudio: false })
     expect(silentReverse.ffmpeg[0].args).not.toContain('-af')
@@ -280,8 +281,8 @@ describe('video-effects', () => {
   })
 
   it('maps stabilise and denoise strengths to filters', async () => {
-    expect(argAfter((await plugin.run('video-effects', [clip], { effect: 'stabilize', strength: 'strong' })).ffmpeg[0].args, '-vf')).toBe('deshake=rx=32:ry=32:edge=mirror')
-    expect(argAfter((await plugin.run('video-effects', [clip], { effect: 'denoise', strength: 'light' })).ffmpeg[0].args, '-vf')).toBe('hqdn3d=2:1.5:3:3')
+    expect(argAfter((await plugin.run('video-effects', [clip], { effect: 'stabilize', strength: 'strong' })).ffmpeg[0].args, '-vf')).toBe('deshake=rx=32:ry=32:edge=mirror,' + EVEN)
+    expect(argAfter((await plugin.run('video-effects', [clip], { effect: 'denoise', strength: 'light' })).ffmpeg[0].args, '-vf')).toBe('hqdn3d=2:1.5:3:3,' + EVEN)
   })
 })
 
@@ -459,7 +460,7 @@ describe('watermark-video', () => {
     const result = await plugin.run('watermark-video', [clip], { kind: 'text', text: "it's: 100% \\ 中文", box: [0.5, 0.5, 0.4, 0.1], color: '#00ff00', opacity: 100 })
     const call = result.ffmpeg[0]
     expect(call.inputs).toEqual(['clip.mp4', 'NotoSansSC-Regular.ttf', 'watermark.txt'])
-    expect(argAfter(call.args, '-vf')).toMatch(/^drawtext=fontfile=\$in1:textfile=\$in2:fontcolor=#00ff00@1\.00:.*fontsize=h\*0\.0800:x=w\*0\.5000:y=h\*0\.5000,format=yuv420p$/)
+    expect(argAfter(call.args, '-vf')).toMatch(/^drawtext=fontfile=\$in1:textfile=\$in2:fontcolor=#00ff00@1\.00:.*fontsize=h\*0\.0800:x=w\*0\.5000:y=h\*0\.5000,format=yuv420p,pad=ceil\(iw\/2\)\*2:ceil\(ih\/2\)\*2,format=yuv420p$/)
     expect(plugin.lastRemoved().sort()).toEqual(['NotoSansSC-Regular.ttf', 'watermark.txt'])
   })
 
@@ -502,7 +503,7 @@ describe('subtitles', () => {
     const result = await plugin.run('subtitles', [clip, srt('a.srt', 'x')], { mode: 'burn', fontSize: 30, margin: 40 })
     const call = result.ffmpeg[0]
     expect(call.inputs).toEqual(['clip.mp4', 'a.srt', 'NotoSansSC-Regular.ttf'])
-    expect(argAfter(call.args, '-vf')).toBe("subtitles=$in1:fontsdir=/:force_style='FontName=Noto Sans SC,FontSize=30,MarginV=40,Outline=2,Shadow=0'")
+    expect(argAfter(call.args, '-vf')).toBe("subtitles=$in1:fontsdir=/:force_style='FontName=Noto Sans SC,FontSize=30,MarginV=40,Outline=2,Shadow=0'," + EVEN)
   })
 })
 
@@ -512,5 +513,26 @@ describe('to-gif: APNG', () => {
     expect(result.ffmpeg).toHaveLength(1)
     expect(result.ffmpeg[0].args).toEqual(expect.arrayContaining(['-c:v', 'apng', '-plays', '0', '-f', 'apng']))
     expect(result.ffmpeg[0].outputs[0]).toBe('clip.png')
+  })
+})
+
+describe('odd-sized video encoding', () => {
+  const webm = { name: 'odd.webm', content: new Uint8Array(16), type: 'video/webm' }
+  it('pads the original dimensions for WebM to MP4, with or without resizing', async () => {
+    const original = await plugin.run('convert-video', [webm], {})
+    expect(argAfter(original.ffmpeg[0].args, '-vf')).toBe(EVEN)
+    const scaled = await plugin.run('convert-video', [webm], { resolution: '1920' })
+    expect(argAfter(scaled.ffmpeg[0].args, '-vf')).toBe('scale=1920:-2:flags=lanczos,' + EVEN)
+  })
+  it('does not filter stream-copy exports, even with a stale resolution', async () => {
+    const result = await plugin.run('convert-video', [webm], { codec: 'copy', resolution: '1920', container: 'mkv', audio: 'copy' })
+    expect(result.ffmpeg[0].args).not.toContain('-vf')
+  })
+  it('pads both compression passes when downscaling is disabled', async () => {
+    const result = await plugin.run('compress-video', [webm], { mode: 'size', targetMB: 1, downscale: false }, {
+      probe: { 'odd.webm': { durationSeconds: 14.16, width: 566, height: 447, audioCodec: null } },
+    })
+    expect(result.ffmpeg).toHaveLength(2)
+    for (const call of result.ffmpeg) expect(argAfter(call.args, '-vf')).toBe(EVEN)
   })
 })

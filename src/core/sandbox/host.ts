@@ -381,6 +381,7 @@ export class SandboxHost {
       allowedInputs: this.allowedInputs,
       ownedOutputs: this.ownedOutputs,
       trusted: this.options.trusted,
+      networkScope: this,
       onProgress: pending?.onProgress ? (ratio, label) => pending.onProgress?.(ratio, label) : undefined,
       signal: pending?.signal,
     }
